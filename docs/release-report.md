@@ -14,7 +14,7 @@ Twelve reviewer/manager instructions are in `agents/`. Three independent agents 
 
 ## CONNECTED CAPABILITIES
 
-Sites was used to provision one owner-only private site and initialize its source workflow. GitHub repository access was verified. Native browser tooling inspected the local signed-out page and original collage. The technical-debugging and Sites skills guided setup. No Gmail/OpenAI app credentials were established.
+Sites was used to provision one owner-only private site and initialize its source workflow. GitHub repository access was verified. Native browser tooling inspected the signed-out page, original collage and authenticated report. Playwright Chromium executed the approved synthetic-login workflows. The technical-debugging and Sites skills guided setup. No Gmail/OpenAI app credentials were established.
 
 ## GITHUB
 
@@ -22,11 +22,11 @@ Target repository: https://github.com/oroofarm-lang/Gmail-cleaner. The complete 
 
 ## DEPLOYMENT
 
-Local preview: http://127.0.0.1:5173/. Site reserved: https://inbox-agent-mail-clean.berry-bay-1066.chatgpt.site (project `appgprj_6ac3cbc44a9c81919a5c2b4b92e83a23`). No deployed version has been certified. Native Sites deployments are production deployments even when access is private; required unfinished UI gates therefore prevent deployment under the user's instruction not to deploy production with failing mandatory gates.
+Local preview: http://127.0.0.1:5173/. Site reserved: https://inbox-agent-mail-clean.berry-bay-1066.chatgpt.site (project `appgprj_6ac3cbc44a9c81919a5c2b4b92e83a23`). No deployed version has been certified. Native Sites deployments are production deployments even when access is private; unresolved live-integration, operational and release-review gates prevent production certification.
 
 ## TESTS
 
-Executed locally: 40/40 core, provider, backend, dependency and extension tests; 10/10 security/extension checks; ESLint; TypeScript; Prettier; production web build; extension build. Clean `npm ci` and the final format, lint, typecheck and production build also passed. Browser workflow, axe, visual and keyboard tests are authored but not executed. Automatic approval review rejected clicking local synthetic sign-in; authorization is pending. Test counts overlap where the security command repeats extension checks.
+Executed locally: 40/40 core, provider, backend, dependency and extension tests; 10/10 security/extension checks; ESLint; TypeScript; Prettier; production web build; extension build. Clean `npm ci` and the final format, lint, typecheck and production build also passed. Five browser scenarios passed after explicit user authorization for local synthetic sign-in: cleanup/Undo, approved rule persistence, desktop light/dark accessibility, responsive reports, and all-screen mobile accessibility/keyboard/reflow. The first runs exposed test synchronization/selectors plus missing mobile button name and dialog Tab-boundary handling; both product defects were fixed and the complete suite re-run successfully. Test counts overlap where the security command repeats extension checks.
 
 ## SECURITY
 
@@ -42,11 +42,11 @@ Executed tests ensure mail instructions cannot call tools or replace determinist
 
 ## ACCESSIBILITY
 
-Source includes skip navigation, labels, focus handling, reduced-motion behavior and native dialogs. Sticker Bomb text uses opaque black/white labels; essential compact labels were enlarged. No WCAG certification is claimed: axe, complete keyboard, screen-reader, zoom and connected viewport checks remain pending.
+Source includes skip navigation, labels, focus handling, reduced-motion behavior and native dialogs. Sticker Bomb text uses opaque black/white labels; essential compact labels were enlarged. Executed axe checks found zero violations on nine desktop screens in light and dark modes and nine mobile screens at 390/320px. A 12-step dialog Tab cycle, Escape dismissal, hidden mobile sidebar focus exclusion, keyboard navigation and reduced-motion transition suppression passed. No full WCAG certification is claimed: manual screen-reader, assistive technology and complete zoom checks remain required.
 
 ## VISUAL QA
 
-The signed-out state and original SVG collage were inspected in the native browser. Full authenticated screens and 1600/1280/768/390/320px, dark mode and overflow checks remain pending local sign-in authorization. Reference image guided style only. A screenshot of the collage alone cannot certify the application layout.
+The signed-out state and original SVG collage were inspected in the native browser. Authenticated report screenshots and overflow checks passed at 1600/1280/768/390/320px. All nine screens were captured and checked for overflow at 390/320px, together with dark settings. Desktop/mobile report layouts were visually inspected. Reference image guided style only. A screenshot of the collage alone cannot certify the application layout.
 
 ## PERFORMANCE
 
@@ -70,10 +70,10 @@ Privacy, terms, accessibility, security and AI disclosures are drafts. Legal/con
 
 ## REMAINING MANUAL ACTIONS
 
-Approve local synthetic sign-in or sign in in the preview for UI QA. Provide provider credentials through secret management, authorize a disposable test mailbox, finalize legal/business details and submit external Google/Chrome approvals. Coding tasks also remain: worker scheduling/PubSub, safely constrained automatic unsubscribe, extension pairing, production authentication/operational recovery verification and the full release-review council. These are engineering blockers, not merely external manual actions.
+Provide provider credentials through secret management, authorize a disposable test mailbox, finalize legal/business details and submit external Google/Chrome approvals. Coding tasks also remain: worker scheduling/PubSub, safely constrained automatic unsubscribe, extension pairing, production authentication/operational recovery verification and the full release-review council. These are engineering blockers, not merely external manual actions.
 
 ## RELEASE STATUS
 
 NOT READY
 
-Build and bounded safety tests pass. Mandatory UI, live integration, operational and independent review gates remain incomplete, together with technical features listed above. This does not meet TECHNICALLY READY — EXTERNAL APPROVAL REQUIRED.
+Build and bounded safety tests pass. Automated UI checks now pass. Live integration, manual accessibility, operational and independent review gates remain incomplete, together with technical features listed above. This does not meet TECHNICALLY READY — EXTERNAL APPROVAL REQUIRED.

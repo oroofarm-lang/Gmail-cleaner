@@ -27,3 +27,9 @@ Release council assessment for this bounded scope: NOT READY for public real-mai
 ## Primary source fixes — 2026-10-06
 
 Closed mobile navigation uses visibility:hidden (removed from focus/accessibility tree) and toggle has aria-expanded. Live plan shows server-planned subjects and displays confirmed total/skipped/uncertain results. Report summary is computed across all groups in SQL, with largest-100 disclosure; inspector loads successive 50-message pages. Assistant navigation uses URL/history subscription. Registered mark removed. Smart Mode now wires optional schema-validated Responses command interpretation and explicit advisory metadata requests; real-provider verification remains unperformed. Browser keyboard/axe/reflow and notification preference behavior remain separate verification work.
+
+## Executed browser verification — 2026-10-06
+
+User explicitly approved synthetic local sign-in. Playwright Chromium: 5/5 browser scenarios pass. Axe has zero violations across nine desktop screens in light/dark and nine screens at 390/320px. Report reflow also passes at 1600/1280/768px. Tests verify cleanup approval/Trash/Undo, rule persistence after reload, modal Tab cycling and Escape, reduced-motion transition suppression, exclusion of closed mobile navigation from focus, and keyboard navigation.
+
+Actual defects fixed: the mobile assistant shortcut lacked an accessible name when its visible text was hidden, and dialog Tab navigation could leave the dialog at the control boundary. Both are covered by executed regression checks. Loading-state and count-bearing navigation selectors in the original tests were corrected without weakening the product assertions. Screenshots are in ignored local test-results/; manual screen-reader/zoom and full assistive-technology certification remain unperformed.

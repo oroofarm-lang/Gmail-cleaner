@@ -127,6 +127,28 @@ const titles: Record<string, string> = {
 const fmt = (n: number) => new Intl.NumberFormat("en-US").format(n);
 const space = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`;
+function trapDialogTab(event: React.KeyboardEvent<HTMLDialogElement>) {
+  if (event.key !== "Tab") return;
+  const dialog = event.currentTarget;
+  const controls = Array.from(
+    dialog.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => el.getClientRects().length > 0);
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (!first || !last) {
+    event.preventDefault();
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 function Sticker({
   children,
   tone = "lime",
@@ -441,7 +463,11 @@ export default function App() {
               <Sun size={18} />
               <Moon size={18} />
             </button>
-            <button className="agent-shortcut" onClick={() => go("assistant")}>
+            <button
+              className="agent-shortcut"
+              aria-label="Ask your agent"
+              onClick={() => go("assistant")}
+            >
               <Command size={16} />
               <span>Ask your agent</span>
               <ArrowUpRight size={16} />
@@ -1615,6 +1641,7 @@ export default function App() {
           ref={(el) => {
             if (el && !el.open) el.showModal();
           }}
+          onKeyDown={trapDialogTab}
           onCancel={() => setPlan(null)}
           onClose={() => setPlan(null)}
           aria-labelledby="review-title"
@@ -1704,6 +1731,7 @@ export default function App() {
           ref={(el) => {
             if (el && !el.open) el.showModal();
           }}
+          onKeyDown={trapDialogTab}
           onCancel={() => setConfirm("")}
           aria-labelledby="confirm-title"
         >

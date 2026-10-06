@@ -3,19 +3,30 @@ import AxeBuilder from "@axe-core/playwright";
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
   const signIn = page.getByRole("link", { name: "Sign in", exact: true });
-  if (await signIn.isVisible()) await signIn.click();
-  await expect(page.locator("main")).toBeVisible();
   const demo = page.getByRole("button", {
     name: "Explore a demo",
     exact: true,
   });
+  const demoMode = page.getByText("DEMO MODE", { exact: true });
+  // Wait for API-backed onboarding before inspecting state; main exists during loading.
+  await expect(signIn.or(demo).or(demoMode)).toBeVisible();
+  if (await signIn.isVisible()) {
+    await signIn.click();
+    await expect(demo.or(demoMode)).toBeVisible();
+  }
   if (await demo.isVisible()) await demo.click();
-  await expect(page.getByText("DEMO MODE", { exact: true })).toBeVisible();
+  await expect(demoMode).toBeVisible();
+  if ((await page.locator("html").getAttribute("data-theme")) === "dark") {
+    await page
+      .getByRole("button", { name: "Toggle light and dark appearance" })
+      .click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  }
 });
 test("review, Trash, idempotent backend and Undo preserve the demo", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "Deep clean", exact: true }).click();
+  await page.getByRole("button", { name: "Deep clean", exact: false }).click();
   const row = page.locator(".mail-row").filter({ hasText: "Studio Supply" });
   await row.getByRole("checkbox").check();
   await page
@@ -33,7 +44,7 @@ test("review, Trash, idempotent backend and Undo preserve the demo", async ({
     .click();
   await page.getByRole("button", { name: "Undo", exact: true }).first().click();
   await expect(page.getByRole("status")).toContainText("restored");
-  await page.getByRole("button", { name: "Deep clean", exact: true }).click();
+  await page.getByRole("button", { name: "Deep clean", exact: false }).click();
   await expect(row).toBeVisible();
 });
 test("assistant and approved deterministic rules persist", async ({ page }) => {
@@ -61,36 +72,52 @@ test("assistant and approved deterministic rules persist", async ({ page }) => {
 test("accessibility critical screens, dialog keyboard and reduced motion", async ({
   page,
 }) => {
-  for (const view of [
-    "Inbox report",
-    "Deep clean",
-    "Subscriptions",
-    "Protected mail",
-    "Your inbox agent",
-    "Rules & autopilot",
-    "Inbox guardian",
-    "Activity & undo",
-  ]) {
-    await page.getByRole("button", { name: view, exact: true }).click();
-    const result = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
-      .analyze();
-    expect(result.violations, JSON.stringify(result.violations)).toEqual([]);
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark") {
+      await page
+        .getByRole("button", { name: "Toggle light and dark appearance" })
+        .click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    }
+    for (const view of [
+      "Inbox report",
+      "Deep clean",
+      "Subscriptions",
+      "Protected mail",
+      "Your inbox agent",
+      "Rules & autopilot",
+      "Inbox guardian",
+      "Activity & undo",
+      "Settings & privacy",
+    ]) {
+      await page.getByRole("button", { name: view, exact: false }).click();
+      const result = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+        .analyze();
+      expect(result.violations, JSON.stringify(result.violations)).toEqual([]);
+    }
   }
-  await page.getByRole("button", { name: "Deep clean", exact: true }).click();
+  await page.getByRole("button", { name: "Deep clean", exact: false }).click();
   await page.locator(".row-checkbox:enabled").first().check();
   await page
     .getByRole("button", { name: "Review cleanup", exact: true })
     .click();
-  await page.keyboard.press("Tab");
-  expect(
-    await page
-      .locator("dialog")
-      .evaluate((d) => d.contains(document.activeElement)),
-  ).toBe(true);
+  for (let step = 0; step < 12; step++) {
+    await page.keyboard.press("Tab");
+    expect(
+      await page
+        .locator("dialog")
+        .evaluate((d) => d.contains(document.activeElement)),
+    ).toBe(true);
+  }
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(
+    await page
+      .locator(".sidebar")
+      .evaluate((el) => getComputedStyle(el).transitionDuration),
+  ).toBe("0s");
 });
 test("visual responsive matrix does not overflow and keeps essential content", async ({
   page,
@@ -131,4 +158,67 @@ test("visual responsive matrix does not overflow and keeps essential content", a
   await page
     .getByRole("combobox", { name: "Appearance", exact: true })
     .selectOption("light");
+});
+
+test("mobile accessibility, hidden navigation focus and all-screen reflow", async ({
+  page,
+}) => {
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const view of [
+      "report",
+      "deep-clean",
+      "subscriptions",
+      "protected",
+      "assistant",
+      "rules",
+      "guardian",
+      "activity",
+      "settings",
+    ]) {
+      await page.goto(`/?view=${view}`);
+      await expect(page.locator("main h1")).toBeVisible();
+      const result = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+        .analyze();
+      expect(
+        result.violations,
+        JSON.stringify({ width, view, violations: result.violations }),
+      ).toEqual([]);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+        `${view} at ${width}px`,
+      ).toBe(true);
+      await page.screenshot({
+        path: `test-results/${view}-${width}.png`,
+        fullPage: true,
+      });
+    }
+    await page.goto("/?view=report");
+    await expect(page.locator(".hero-number")).toBeVisible();
+    for (let step = 0; step < 12; step++) {
+      await page.keyboard.press("Tab");
+      expect(
+        await page.evaluate(
+          () => !!document.activeElement?.closest(".sidebar"),
+        ),
+      ).toBe(false);
+    }
+    await page
+      .getByRole("button", { name: "Open navigation", exact: true })
+      .focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Close navigation", exact: true }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await page
+      .getByRole("navigation")
+      .getByRole("button", { name: "Deep clean" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Open navigation", exact: true }),
+    ).toHaveAttribute("aria-expanded", "false");
+  }
 });
