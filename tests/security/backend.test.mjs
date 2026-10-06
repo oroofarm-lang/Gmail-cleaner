@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { SourceTextModule, SyntheticModule, createContext } from "node:vm";
 import { DatabaseSync } from "node:sqlite";
@@ -14,9 +14,10 @@ import * as mime from "../../packages/integrations/gmail.ts";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 async function harness() {
   const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(
-    await readFile(`${root}/drizzle/0000_little_chimera.sql`, "utf8"),
-  );
+  for (const file of (await readdir(`${root}/drizzle`))
+    .filter((file) => file.endsWith(".sql"))
+    .sort())
+    sqlite.exec(await readFile(`${root}/drizzle/${file}`, "utf8"));
   const mutations = [];
   const fixture = {
     user: { userId: "alice", email: "alice@example.org" },
@@ -209,6 +210,8 @@ async function harness() {
     "./demo": "lib/demo.ts",
     "@/lib/demo": "lib/demo.ts",
     "@/packages/core": "packages/core/index.ts",
+    "@/packages/integrations/unsubscribe":
+      "packages/integrations/unsubscribe.ts",
     "@/lib/gmail-server": "lib/gmail-server.ts",
   };
   async function load(name) {

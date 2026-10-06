@@ -477,8 +477,61 @@ async function handle(req: Request) {
           "AI is advisory. Deterministic protection remains authoritative.",
       });
     }
-    if (path === "export")
-      return json({ settings: t.settings, rules: (await state(t)).rules });
+    if (path === "export") {
+      const input = z
+        .object({
+          collection: z
+            .enum([
+              "mail_groups",
+              "messages",
+              "plans",
+              "actions",
+              "rules",
+              "jobs",
+            ])
+            .optional(),
+          cursor: z.string().max(500).optional(),
+        })
+        .strict()
+        .parse(body);
+      if (!input.collection)
+        return json({
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          settings: t.settings,
+          collections: [
+            "mail_groups",
+            "messages",
+            "plans",
+            "actions",
+            "rules",
+            "jobs",
+          ],
+          consistency: "Paged current data; not an atomic backup.",
+        });
+      const columns =
+        input.collection === "jobs"
+          ? "id,source,cursor,processed,status,history_id,updated"
+          : "*";
+      const result = await db
+        .prepare(
+          `SELECT ${columns} FROM ${input.collection} WHERE tenant=? AND id>? ORDER BY id LIMIT 201`,
+        )
+        .bind(t.id, input.cursor ?? "")
+        .all();
+      const rows = result.results
+        .slice(0, 200)
+        .map((row) =>
+          Object.fromEntries(
+            Object.entries(row).filter(([name]) => name !== "tenant"),
+          ),
+        );
+      return json({
+        collection: input.collection,
+        rows,
+        nextCursor: result.results.length > 200 ? rows.at(-1)?.id : null,
+      });
+    }
     if (path === "delete-data" || path === "delete-account") {
       z.object({ confirmation: z.literal("DELETE") })
         .strict()

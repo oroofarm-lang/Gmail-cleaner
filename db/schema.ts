@@ -89,6 +89,7 @@ export const jobs = sqliteTable(
     historyId: text("history_id"),
     updated: integer("updated").notNull(),
     lease: integer("lease").notNull().default(0),
+    owner: text("owner"),
   },
   (t) => [index("jobs_tenant").on(t.tenant, t.source)],
 );

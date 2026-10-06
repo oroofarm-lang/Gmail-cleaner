@@ -153,6 +153,7 @@ export class GmailClient {
         );
       }
       if (
+        method !== "GET" ||
         attempt >= retries ||
         !(quota || response.status === 429 || response.status >= 500)
       )

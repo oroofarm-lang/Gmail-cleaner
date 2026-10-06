@@ -13,3 +13,7 @@
 | Operational events    | Runtime logs                            | Reliability/security         | Operator                                 | Never include email text or tokens                |
 
 Required flows: browser → gateway → same-origin API → tenant repository → deterministic policy → fixed-origin provider. Email headers/snippets and unsubscribe targets are attacker-controlled data. External destinations cannot become instructions. See threat model and retention plan.
+
+## User export
+
+Authenticated `POST /api/export` returns a manifest with preferences and six allowlisted collections: groups, messages, plans, actions, rules and jobs. Each collection uses tenant-scoped ID keyset pagination (200 rows). The browser completes all pages before downloading `inbox-agent-data.json`. Credentials, OAuth transactions and scan owner tokens are excluded. This is current paged data, not a transactionally consistent backup or restore artifact. Mail metadata/action details remain sensitive and are disclosed only to their owner.

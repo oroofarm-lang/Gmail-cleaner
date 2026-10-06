@@ -21,7 +21,7 @@ Click **Explore a demo**. The server seeds 13 synthetic aggregate groups represe
 
 - Authenticated tenant-scoped D1 state, report, sender groups, protected mail, subscriptions.
 - Persistent demo cleanup with atomic plan claim, revision validation, idempotency, activity and Undo.
-- Conservative deterministic rules; approved sender protection; rules/preferences export and deletion controls.
+- Conservative deterministic rules; approved sender protection; paged export of preferences, rules, inventory, plans, actions and jobs, and deletion controls.
 - Gmail OAuth PKCE/single-use state, AES-GCM encrypted tokens, refresh with account-bound compare-and-swap, revocation.
 - Resumable bounded Gmail inventory using body-free MIME/metadata projection, persistent page cursor and lease.
 - Message-level Gmail plans, explicit approval, fresh thread/protection/MIME checks, tenant serialization, provider action ledger, conservative uncertain state and Undo.
@@ -32,10 +32,10 @@ Click **Explore a demo**. The server seeds 13 synthetic aggregate groups represe
 ## Deliberate limits
 
 - Real Gmail and OpenAI require owner-configured credentials and live verification. No real mailbox was used for testing.
-- Unsubscribe destinations cannot be DNS-pinned safely in this runtime; live unsubscribe is manual-required. No URL is fetched automatically.
+- Unsubscribe destinations cannot be DNS-pinned safely in this runtime; live unsubscribe provides Gmail instructions and screened, explicitly untrusted manual destinations. No URL is fetched automatically.
 - Unattended Autopilot and Guardian require a verified scheduled worker and Pub/Sub integration; UI refuses to enable unsupported execution.
 - The extension currently opens authenticated dashboard actions; API pairing and current-sender intelligence are not implemented.
-- A worker crash between Gmail mutation and database confirmation yields `uncertain` or a stuck execution. The app does not blindly retry or promise recovery. Operational reconciliation needs completion before public launch.
+- Lost Gmail mutation responses yield `uncertain`; explicit Undo inspects current labels, performs only reversible restoration, and verifies the result. Mutations never automatically retry. A hard worker crash can still strand `attempting`/`executing`/`restoring`; durable reconciliation remains required before public launch.
 - Sites/Vinext uses Vinext 1.0.1, a hosting-compatible Next.js implementation. Private deployment is owner-only; public customer ingress/authentication needs verification.
 - Large sender lists expose the largest 100 groups; report totals are computed across the entire inventory. Live message inspector paginates in batches of 50.
 

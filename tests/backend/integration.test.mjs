@@ -596,3 +596,231 @@ test("account deletion clears only owned data and prevents silent tenant recreat
   assert.equal((await request("state", undefined, "A")).status, 403);
   assert.equal((await request("state", undefined, "B")).status, 200);
 });
+
+test("received multi-message conversations are protected before cleanup", async () => {
+  const { calls } = await setupLive();
+  globalThis.__backend.gmail.getThread = async () => ({
+    id: "t1",
+    messages: [
+      { id: "m1", labelIds: ["INBOX", "CATEGORY_PROMOTIONS"] },
+      { id: "m2", labelIds: ["INBOX"] },
+    ],
+  });
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  const result = await request("gmail/execute", {
+    planId: plan.data.id,
+    approved: true,
+  });
+  assert.equal(result.status, 200);
+  assert.equal(calls.length, 0);
+  assert.equal(result.data.skipped, 1);
+});
+test("in-flight scan cannot commit old-account metadata after replacement", async () => {
+  const { mailbox } = await setupLive();
+  globalThis.__backend.gmail.listMessages = async () => ({
+    messages: [{ id: "m1" }],
+  });
+  globalThis.__backend.gmail.getSafetyMessage = async () => {
+    const result = structuredClone(mailbox.get("m1"));
+    sqlite
+      .prepare("UPDATE credentials SET email=? WHERE tenant=?")
+      .run("new@gmail.example", "A");
+    sqlite.prepare("DELETE FROM messages WHERE tenant=?").run("A");
+    sqlite
+      .prepare("DELETE FROM jobs WHERE tenant=? AND source='gmail'")
+      .run("A");
+    return result;
+  };
+  const result = await request("gmail/scan", {});
+  assert.equal(result.status, 409);
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM messages WHERE tenant=?").get("A").n,
+    0,
+  );
+});
+test("simultaneous first scans acquire only one provider lease", async () => {
+  await setupLive();
+  let listed = 0;
+  globalThis.__backend.gmail.listMessages = async () => {
+    listed++;
+    await new Promise((r) => setTimeout(r, 100));
+    return { messages: [] };
+  };
+  const results = await Promise.all([
+    request("gmail/scan", {}),
+    request("gmail/scan", {}),
+  ]);
+  assert.equal(listed, 1);
+  assert.deepEqual(results.map((x) => x.status).sort(), [200, 409]);
+});
+test("disconnect removes local credentials even when OAuth configuration is missing", async () => {
+  await setupLive();
+  delete globalThis.__backend.env.TOKEN_ENCRYPTION_KEY;
+  const result = await request("gmail/disconnect", {});
+  assert.equal(result.status, 200);
+  assert.equal(result.data.revocationConfirmed, false);
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM credentials WHERE tenant=?").get("A")
+      .n,
+    0,
+  );
+  assert.equal(
+    result.data.manualRevokeUrl,
+    "https://myaccount.google.com/connections",
+  );
+});
+
+test("expired scan owner cannot write inventory or release its successor lease", async () => {
+  const { mailbox } = await setupLive();
+  globalThis.__backend.gmail.listMessages = async () => ({
+    messages: [{ id: "m1" }],
+  });
+  globalThis.__backend.gmail.getSafetyMessage = async () => {
+    sqlite
+      .prepare("UPDATE jobs SET owner='successor',lease=? WHERE tenant=?")
+      .run(Date.now() + 120000, "A");
+    return structuredClone(mailbox.get("m1"));
+  };
+  const result = await request("gmail/scan", {});
+  assert.equal(result.status, 409);
+  assert.equal(
+    sqlite.prepare("SELECT owner,status FROM jobs WHERE tenant=?").get("A")
+      .owner,
+    "successor",
+  );
+});
+test("lost cleanup response remains recoverable without replaying trash", async () => {
+  const { mailbox, calls } = await setupLive();
+  globalThis.__backend.gmail.trashMessage = async (id) => {
+    calls.push("trash");
+    mailbox.get(id).labelIds = ["CATEGORY_PROMOTIONS", "TRASH"];
+    throw new Error("synthetic response lost");
+  };
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const action = sqlite
+    .prepare("SELECT id,status FROM actions WHERE kind='trash' AND tenant='A'")
+    .get();
+  assert.equal(action.status, "uncertain");
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    200,
+  );
+  assert.ok(mailbox.get("m1").labelIds.includes("INBOX"));
+  assert.ok(!mailbox.get("m1").labelIds.includes("TRASH"));
+  assert.equal(calls.filter((x) => x === "trash").length, 1);
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    409,
+  );
+});
+
+test("privacy export is complete, paginated, tenant scoped and excludes credentials", async () => {
+  await setupLive();
+  await demo("B");
+  for (let i = 0; i < 205; i++)
+    sqlite
+      .prepare(
+        "INSERT INTO messages(id,tenant,gmail_id,metadata,classification,updated) VALUES(?,?,?,?,?,?)",
+      )
+      .run(
+        `A:export:${String(i).padStart(3, "0")}`,
+        "A",
+        `e${i}`,
+        "{}",
+        "{}",
+        Date.now(),
+      );
+  const manifest = await request("export", {});
+  assert.equal(manifest.status, 200);
+  assert.ok(manifest.data.collections.includes("messages"));
+  assert.ok(manifest.data.collections.includes("actions"));
+  assert.ok(!JSON.stringify(manifest.data).includes("test-token"));
+  const first = await request("export", { collection: "messages" });
+  assert.equal(first.data.rows.length, 200);
+  assert.ok(first.data.nextCursor);
+  const second = await request("export", {
+    collection: "messages",
+    cursor: first.data.nextCursor,
+  });
+  assert.equal(second.data.rows.length, 6);
+  assert.equal(second.data.nextCursor, null);
+  assert.ok(
+    [...first.data.rows, ...second.data.rows].every(
+      (row) => row.id.startsWith("A:") && !("tenant" in row),
+    ),
+  );
+  assert.equal(
+    (await request("export", { collection: "credentials" })).status,
+    400,
+  );
+});
+
+test("lost Undo response can be safely retried after inspecting current labels", async () => {
+  const { mailbox } = await setupLive();
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const action = sqlite
+    .prepare("SELECT id FROM actions WHERE kind='trash' AND tenant='A'")
+    .get();
+  let untrash = 0;
+  globalThis.__backend.gmail.untrashMessage = async (id) => {
+    untrash++;
+    mailbox.get(id).labelIds = ["CATEGORY_PROMOTIONS"];
+    throw new Error("synthetic restoration response lost");
+  };
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    503,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT status FROM actions WHERE id=?").get(action.id)
+      .status,
+    "restore_uncertain",
+  );
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    200,
+  );
+  assert.equal(untrash, 1);
+  assert.ok(mailbox.get("m1").labelIds.includes("INBOX"));
+});
+
+test("manual unsubscribe returns scoped options without provider calls or automatic success", async () => {
+  await setupLive();
+  globalThis.__backend.gmail.listMessages = async () => ({ messages: [] });
+  await request("gmail/scan", {});
+  const group = sqlite
+    .prepare("SELECT id FROM mail_groups WHERE tenant='A' AND source='gmail'")
+    .get();
+  const result = await request("gmail/unsubscribe-options", { id: group.id });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.sent, false);
+  assert.equal(result.data.gmailUrl, "https://mail.google.com/mail/");
+  assert.ok(result.data.search.startsWith("from:"));
+  assert.equal(result.data.status, "unavailable");
+  await demo("B");
+  assert.equal(
+    (await request("gmail/unsubscribe-options", { id: group.id }, "B")).status,
+    404,
+  );
+});
+
+test("failed preflight never gives Undo authority over a later manual user change", async () => {
+  const { mailbox } = await setupLive();
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  globalThis.__backend.gmail.getThread = async () => {
+    throw new Error("synthetic preflight failure");
+  };
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const action = sqlite
+    .prepare("SELECT id,status FROM actions WHERE kind='trash' AND tenant='A'")
+    .get();
+  assert.equal(action.status, "failed");
+  mailbox.get("m1").labelIds = ["TRASH", "CATEGORY_PROMOTIONS"];
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    409,
+  );
+  assert.ok(mailbox.get("m1").labelIds.includes("TRASH"));
+});

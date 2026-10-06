@@ -205,6 +205,14 @@ export default function App() {
     [menu, setMenu] = useState(false),
     [confirm, setConfirm] = useState(""),
     [confirmText, setConfirmText] = useState("");
+  const [manualUnsubscribe, setManualUnsubscribe] = useState<{
+    reason: string;
+    sender: string;
+    account: string | null;
+    gmailUrl: string;
+    search: string;
+    candidates: { kind: string; url: string }[];
+  } | null>(null);
   const view = useSyncExternalStore(
     subscribeView,
     viewSnapshot,
@@ -935,6 +943,7 @@ export default function App() {
                                   <button
                                     className="text-button"
                                     onClick={() => {
+                                      setManualUnsubscribe(null);
                                       setConfirm(`unsubscribe:${g.id}`);
                                       setConfirmText("");
                                     }}
@@ -1385,7 +1394,11 @@ export default function App() {
                             </p>
                           </div>
                           {["trash", "archive"].includes(a.kind) &&
-                            a.status === "success" && (
+                            [
+                              "success",
+                              "uncertain",
+                              "restore_uncertain",
+                            ].includes(a.status) && (
                               <button
                                 className="button secondary"
                                 disabled={!!busy}
@@ -1546,22 +1559,42 @@ export default function App() {
                   <section>
                     <h2>Data & privacy</h2>
                     <p>
-                      Export your rules and preferences, or clear stored app
-                      data. This never deletes Gmail messages.
+                      Export your preferences, rules, stored analysis and action
+                      history, or clear app data. This never deletes Gmail
+                      messages.
                     </p>
                     <button
                       className="button secondary"
                       onClick={async () => {
                         try {
                           const result = await api("export", {});
+                          const records: Record<string, unknown[]> = {};
+                          for (const collection of result.collections as string[]) {
+                            records[collection] = [];
+                            let cursor: string | null = null;
+                            do {
+                              const page: {
+                                rows: unknown[];
+                                nextCursor: string | null;
+                              } = await api("export", {
+                                collection,
+                                ...(cursor ? { cursor } : {}),
+                              });
+                              records[collection].push(...page.rows);
+                              cursor = page.nextCursor;
+                            } while (cursor);
+                          }
                           const url = URL.createObjectURL(
-                            new Blob([JSON.stringify(result, null, 2)], {
-                              type: "application/json",
-                            }),
+                            new Blob(
+                              [JSON.stringify({ ...result, records }, null, 2)],
+                              {
+                                type: "application/json",
+                              },
+                            ),
                           );
                           const a = document.createElement("a");
                           a.href = url;
-                          a.download = "inbox-agent-preferences.json";
+                          a.download = "inbox-agent-data.json";
                           a.click();
                           URL.revokeObjectURL(url);
                         } catch (e) {
@@ -1570,7 +1603,7 @@ export default function App() {
                       }}
                     >
                       <Download size={16} />
-                      Export preferences
+                      Export app data
                     </button>
                     <button
                       className="text-button danger"
@@ -1761,6 +1794,47 @@ export default function App() {
                 ? "Google access will be revoked. Your Gmail messages stay. Stored analysis remains until you delete it."
                 : "This removes your app analysis, rules and activity. It never deletes Gmail messages. Disconnect Gmail first. Account deletion prevents reuse until an explicit new signup."}
           </p>
+          {confirm.startsWith("unsubscribe:") &&
+            !demoMode &&
+            manualUnsubscribe && (
+              <div>
+                <p>{manualUnsubscribe.reason}</p>
+                <p>
+                  In Gmail, select{" "}
+                  {manualUnsubscribe.account ?? "your connected account"},
+                  search for <strong>{manualUnsubscribe.search}</strong>, open a
+                  message and use Gmail’s unsubscribe control if available.
+                  Verify the sender first.
+                </p>
+                <a
+                  className="button secondary"
+                  href={manualUnsubscribe.gmailUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open Gmail <ExternalLink size={16} />
+                </a>
+                {manualUnsubscribe.candidates.length > 0 && (
+                  <p>
+                    These destinations come from untrusted email headers.
+                    Opening a link may share your IP and a tracking identifier.
+                    Review the domain before proceeding; Inbox Agent has sent no
+                    request.
+                  </p>
+                )}
+                {manualUnsubscribe.candidates.map((candidate) => (
+                  <p key={candidate.url}>
+                    <a
+                      href={candidate.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {candidate.url}
+                    </a>
+                  </p>
+                ))}
+              </div>
+            )}
           {confirm.startsWith("delete") && (
             <label className="delete-confirm">
               Type DELETE to confirm
@@ -1782,6 +1856,21 @@ export default function App() {
                 (confirm.startsWith("delete") && confirmText !== "DELETE")
               }
               onClick={async () => {
+                if (confirm.startsWith("unsubscribe:") && !demoMode) {
+                  setBusy("manual-unsubscribe");
+                  try {
+                    setManualUnsubscribe(
+                      await api("gmail/unsubscribe-options", {
+                        id: confirm.split(":").slice(1).join(":"),
+                      }),
+                    );
+                  } catch (e) {
+                    setError((e as Error).message);
+                  } finally {
+                    setBusy("");
+                  }
+                  return;
+                }
                 const path = confirm.startsWith("unsubscribe:")
                   ? "unsubscribe"
                   : confirm === "disconnect"
@@ -1813,7 +1902,9 @@ export default function App() {
               }}
             >
               {confirm.startsWith("unsubscribe:")
-                ? "Confirm unsubscribe"
+                ? demoMode
+                  ? "Confirm unsubscribe"
+                  : "Review manual options"
                 : confirm === "disconnect"
                   ? "Disconnect"
                   : "Delete app data"}

@@ -15,6 +15,7 @@ import {
 } from "@/packages/integrations";
 import { classify, senderAddress, type MessageMetadata } from "@/packages/core";
 import { z } from "zod";
+import { assessUnsubscribe } from "@/packages/integrations/unsubscribe";
 type Tenant = Awaited<ReturnType<typeof tenant>>;
 function oauthConfig(req: Request) {
   const clientId = config("GOOGLE_CLIENT_ID"),
@@ -209,14 +210,14 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
     throw new ApiError(404, "Gmail action unavailable.");
   const body = await req.json();
   if (path === "gmail/disconnect") {
-    const c = oauthConfig(req),
-      row = await db
-        .prepare("SELECT encrypted FROM credentials WHERE tenant=?")
-        .bind(t.id)
-        .first<{ encrypted: string }>();
+    const row = await db
+      .prepare("SELECT encrypted FROM credentials WHERE tenant=?")
+      .bind(t.id)
+      .first<{ encrypted: string }>();
     let revocationConfirmed = true;
     if (row) {
       try {
+        const c = oauthConfig(req);
         const tokens = await decryptTokens(row.encrypted, c.key, t.id);
         await revokeGoogleToken(tokens.refresh_token ?? tokens.access_token);
       } catch {
@@ -257,38 +258,32 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
   }
   if (path === "gmail/scan") {
     const gmail = await clientFor(t, req);
-    let job = await db
-      .prepare(
-        `SELECT * FROM jobs WHERE tenant=? AND source='gmail' AND status IN ('running','interrupted') ORDER BY updated DESC LIMIT 1`,
-      )
+    const account = await db
+      .prepare("SELECT email FROM credentials WHERE tenant=?")
       .bind(t.id)
-      .first<{
-        id: string;
-        cursor: string | null;
-        processed: number;
-        lease: number;
-      }>();
-    if (!job) {
-      const id = crypto.randomUUID();
-      await db
-        .prepare(
-          `INSERT INTO jobs(id,tenant,source,cursor,processed,status,updated,lease) VALUES(?,?,'gmail',NULL,0,'running',?,0)`,
-        )
-        .bind(id, t.id, Date.now())
-        .run();
-      job = { id, cursor: null, processed: 0, lease: 0 };
-    }
-    const claim = await db
+      .first<{ email: string }>();
+    if (!account) throw new ApiError(409, "Connect Gmail first.");
+    const jobId = `${t.id}:gmail:scan`;
+    const owner = crypto.randomUUID();
+    await db
       .prepare(
-        "UPDATE jobs SET lease=?,status=? WHERE id=? AND tenant=? AND lease<?",
+        "INSERT OR IGNORE INTO jobs(id,tenant,source,cursor,processed,status,updated,lease) VALUES(?,?,'gmail',NULL,0,'running',?,0)",
       )
-      .bind(Date.now() + 120000, "running", job.id, t.id, Date.now())
+      .bind(jobId, t.id, Date.now())
       .run();
-    if (!claim.meta.changes)
+    const job = await db
+      .prepare(
+        "UPDATE jobs SET owner=?,lease=?,cursor=CASE WHEN status='complete' THEN NULL ELSE cursor END,status='running' WHERE id=? AND tenant=? AND lease<? RETURNING id,cursor,processed",
+      )
+      .bind(owner, Date.now() + 120000, jobId, t.id, Date.now())
+      .first<{ id: string; cursor: string | null; processed: number }>();
+    if (!job)
       throw new ApiError(
         409,
         "A scan is already processing. Try again shortly.",
       );
+    const fence =
+      "EXISTS(SELECT 1 FROM jobs j JOIN credentials c ON c.tenant=j.tenant JOIN tenants t ON t.id=j.tenant WHERE j.id=? AND j.tenant=? AND j.owner=? AND j.lease>? AND j.status='running' AND c.email=? AND t.deleted=0)";
     try {
       const page = await gmail.listMessages({
         pageToken: job.cursor ?? undefined,
@@ -297,11 +292,11 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
       const messages: MessageMetadata[] = [];
       for (const row of page.messages ?? [])
         messages.push(metadata(await gmail.getSafetyMessage(row.id)));
-      await db.batch(
-        messages.map((m) =>
+      const committed = await db.batch([
+        ...messages.map((m) =>
           db
             .prepare(
-              "INSERT INTO messages(id,tenant,gmail_id,metadata,classification,updated) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,classification=excluded.classification,updated=excluded.updated",
+              `INSERT INTO messages(id,tenant,gmail_id,metadata,classification,updated) SELECT ?,?,?,?,?,? WHERE ${fence} ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,classification=excluded.classification,updated=excluded.updated`,
             )
             .bind(
               `${t.id}:${m.id}`,
@@ -310,26 +305,40 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
               JSON.stringify(m),
               JSON.stringify(classify(m, t.settings.protectedSenders)),
               Date.now(),
+              job.id,
+              t.id,
+              owner,
+              Date.now(),
+              account.email,
             ),
         ),
-      );
+        db
+          .prepare(
+            `UPDATE jobs SET cursor=?,processed=(SELECT COUNT(*) FROM messages WHERE tenant=?),status=?,updated=?,lease=0,owner=NULL WHERE id=? AND tenant=? AND ${fence}`,
+          )
+          .bind(
+            page.nextPageToken ?? null,
+            t.id,
+            page.nextPageToken ? "running" : "complete",
+            Date.now(),
+            job.id,
+            t.id,
+            job.id,
+            t.id,
+            owner,
+            Date.now(),
+            account.email,
+          ),
+      ]);
+      if (!committed.at(-1)?.meta.changes)
+        throw new ApiError(
+          409,
+          "Scan ownership or Gmail account changed. Retry a fresh scan.",
+        );
       const total = await db
         .prepare("SELECT COUNT(*) n FROM messages WHERE tenant=?")
         .bind(t.id)
         .first<{ n: number }>();
-      await db
-        .prepare(
-          "UPDATE jobs SET cursor=?,processed=?,status=?,updated=?,lease=0 WHERE id=? AND tenant=?",
-        )
-        .bind(
-          page.nextPageToken ?? null,
-          total?.n ?? 0,
-          page.nextPageToken ? "running" : "complete",
-          Date.now(),
-          job.id,
-          t.id,
-        )
-        .run();
       await refreshGroups(t);
       return json({
         processed: total?.n ?? 0,
@@ -338,8 +347,10 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
       });
     } catch (e) {
       await db
-        .prepare("UPDATE jobs SET status=?,lease=0 WHERE id=? AND tenant=?")
-        .bind("interrupted", job.id, t.id)
+        .prepare(
+          "UPDATE jobs SET status=?,lease=0,owner=NULL WHERE id=? AND tenant=? AND owner=?",
+        )
+        .bind("interrupted", job.id, t.id, owner)
         .run();
       throw e;
     }
@@ -455,7 +466,7 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         const protectedSenders = JSON.parse(prefs.settings).protectedSenders;
         const thread = await gmail.getThread(current.threadId);
         const hasReply =
-          !thread.messages?.length ||
+          thread.messages?.length !== 1 ||
           thread.id !== current.threadId ||
           thread.messages.some((x) => x.labelIds?.includes("SENT"));
         if (
@@ -506,9 +517,9 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         failed++;
         await db
           .prepare(
-            "UPDATE actions SET status=? WHERE id=? AND tenant=? AND status NOT IN (?,?)",
+            "UPDATE actions SET status=CASE WHEN status='attempting' THEN 'uncertain' ELSE 'failed' END WHERE id=? AND tenant=? AND status NOT IN (?,?)",
           )
-          .bind("uncertain", actionId, t.id, "success", "skipped")
+          .bind(actionId, t.id, "success", "skipped")
           .run();
       }
     }
@@ -523,7 +534,7 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
     const input = z.object({ actionId: z.string() }).strict().parse(body);
     const a = await db
       .prepare(
-        `SELECT * FROM actions WHERE id=? AND tenant=? AND source='gmail' AND kind IN ('trash','archive') AND status='success'`,
+        `SELECT * FROM actions WHERE id=? AND tenant=? AND source='gmail' AND kind IN ('trash','archive') AND status IN ('success','uncertain','restore_uncertain')`,
       )
       .bind(input.actionId, t.id)
       .first<{ data: string; kind: string; created: number }>();
@@ -535,7 +546,7 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
     const undoClient = await clientFor(t, req);
     const lock = await db
       .prepare(
-        `UPDATE actions SET status='restoring' WHERE id=? AND tenant=? AND status='success' AND NOT EXISTS(SELECT 1 FROM plans WHERE tenant=? AND source='gmail' AND status='executing') AND NOT EXISTS(SELECT 1 FROM actions other WHERE other.tenant=? AND other.status='restoring')`,
+        `UPDATE actions SET status='restoring' WHERE id=? AND tenant=? AND status IN ('success','uncertain','restore_uncertain') AND NOT EXISTS(SELECT 1 FROM plans WHERE tenant=? AND source='gmail' AND status='executing') AND NOT EXISTS(SELECT 1 FROM actions other WHERE other.tenant=? AND other.status='restoring')`,
       )
       .bind(input.actionId, t.id, t.id, t.id)
       .run();
@@ -544,10 +555,23 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
     const gmail = undoClient,
       d = JSON.parse(a.data) as { gmailId: string; originalLabels: string[] };
     try {
-      if (a.kind === "trash") await gmail.untrashMessage(d.gmailId);
-      if (d.originalLabels.includes("INBOX"))
+      const before = await gmail.getSafetyMessage(d.gmailId);
+      if (before.id !== d.gmailId || !Array.isArray(before.labelIds))
+        throw new Error("Recovery state unavailable");
+      if (a.kind === "trash" && before.labelIds?.includes("TRASH"))
+        await gmail.untrashMessage(d.gmailId);
+      if (
+        d.originalLabels.includes("INBOX") &&
+        !before.labelIds?.includes("INBOX")
+      )
         await gmail.restoreInbox(d.gmailId);
-      const m = metadata(await gmail.getMessage(d.gmailId));
+      const m = metadata(await gmail.getSafetyMessage(d.gmailId));
+      if (
+        m.id !== d.gmailId ||
+        m.labels.includes("TRASH") ||
+        (d.originalLabels.includes("INBOX") && !m.labels.includes("INBOX"))
+      )
+        throw new Error("Recovery not confirmed");
       await db.batch([
         db
           .prepare(`UPDATE actions SET status='undone' WHERE id=? AND tenant=?`)
@@ -578,6 +602,38 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         "Undo could not be confirmed. Check Gmail before retrying.",
       );
     }
+  }
+  if (path === "gmail/unsubscribe-options") {
+    const input = z
+      .object({ id: z.string().min(1).max(300) })
+      .strict()
+      .parse(body);
+    const group = await db
+      .prepare(
+        "SELECT address FROM mail_groups WHERE id=? AND tenant=? AND source='gmail'",
+      )
+      .bind(input.id, t.id)
+      .first<{ address: string }>();
+    if (!group) throw new ApiError(404, "Subscription not found.");
+    const row = await db
+      .prepare(
+        "SELECT metadata FROM messages WHERE tenant=? AND json_extract(metadata,'$.sender')=? ORDER BY updated DESC LIMIT 1",
+      )
+      .bind(t.id, group.address)
+      .first<{ metadata: string }>();
+    const message = row ? (JSON.parse(row.metadata) as MessageMetadata) : null;
+    const connection = await db
+      .prepare("SELECT email FROM credentials WHERE tenant=?")
+      .bind(t.id)
+      .first<{ email: string }>();
+    return json({
+      ...assessUnsubscribe(message?.unsubscribe ?? ""),
+      sender: group.address,
+      account: connection?.email ?? null,
+      gmailUrl: "https://mail.google.com/mail/",
+      search: `from:${group.address}`,
+      sent: false,
+    });
   }
   if (path === "gmail/messages") {
     const input = z

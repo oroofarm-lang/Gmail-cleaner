@@ -361,3 +361,22 @@ test("unsubscribe rejects SSRF destinations and never reports automatic success"
   assert.equal(assessment.candidates[0].oneClick, true);
   assert.equal(assessUnsubscribe("").status, "unavailable");
 });
+
+test("Gmail mutations never automatically retry ambiguous provider errors", async () => {
+  let attempts = 0;
+  const client = new GmailClient({
+    accessToken: "synthetic",
+    sleep: async () => {
+      throw new Error("Mutation must not back off and retry");
+    },
+    fetch: (async () => {
+      attempts++;
+      return Response.json({}, { status: 503 });
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    () => client.trashMessage("synthetic-id"),
+    GmailApiError,
+  );
+  assert.equal(attempts, 1);
+});
