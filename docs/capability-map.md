@@ -1,7 +1,7 @@
 # Capability discovery — 2026-10-05
 
 |Capability|Connected tool|Used?|Fallback / limit|
-|GitHub|GitHub connector; authenticated oroofarm-lang|Read verified|Owner subsequently created oroofarm-lang/Gmail-cleaner and authorized its use. Git credentials and push still need verification; Sites has a separate managed source repository.|
+|GitHub|GitHub connector; authenticated oroofarm-lang|Read verified|Owner subsequently created oroofarm-lang/Gmail-cleaner and authorized its use. Implementation published via the GitHub connector to codex/sticker-bomb; remote source-tree hash verified against local. Shell Git write credentials are unavailable. Sites has a separate managed source repository.|
 |Hosting|Sites / Cloudflare Workers|Selected|Private owner-only deployment; D1 database.|
 |Security|Codex Security plugin and skills|Available|Independent local review and adversarial tests; launch scan after source is complete.|
 |Browser|Native in-app browser and Node REPL|Available|Playwright local QA and screenshots.|
