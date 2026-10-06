@@ -18,7 +18,7 @@ Sites was used to provision one owner-only private site and initialize its sourc
 
 ## GITHUB
 
-Target repository: https://github.com/oroofarm-lang/Gmail-cleaner. Local main is initialized with this origin. Publication status must be verified against a remote commit; this report does not infer a push from local changes. Quality-gate and CodeQL workflows are included. No hosted CI success is asserted.
+Target repository: https://github.com/oroofarm-lang/Gmail-cleaner. The complete implementation is published on `codex/sticker-bomb` at commit `120eb514639ef2f21eac639c7f39976834b74144`. Its tree SHA `da9fece47b57846e914c12eeda975baa57f660d3` was fetched from GitHub and exactly matches the tested local source tree. `main` contains the initial README only. Shell Git write credentials were unavailable; publication used the authenticated GitHub connector. Quality-gate and CodeQL workflows are included. No hosted CI success is asserted.
 
 ## DEPLOYMENT
 
@@ -26,7 +26,7 @@ Local preview: http://127.0.0.1:5173/. Site reserved: https://inbox-agent-mail-c
 
 ## TESTS
 
-Executed locally: 40/40 core, provider, backend, dependency and extension tests; 10/10 security/extension checks; ESLint; TypeScript; Prettier; production web build; extension build. Re-run final format/build after any subsequent edit. Browser workflow, axe, visual and keyboard tests are authored but not executed. Automatic approval review rejected clicking local synthetic sign-in; authorization is pending. Test counts overlap where the security command repeats extension checks.
+Executed locally: 40/40 core, provider, backend, dependency and extension tests; 10/10 security/extension checks; ESLint; TypeScript; Prettier; production web build; extension build. Clean `npm ci` and the final format, lint, typecheck and production build also passed. Browser workflow, axe, visual and keyboard tests are authored but not executed. Automatic approval review rejected clicking local synthetic sign-in; authorization is pending. Test counts overlap where the security command repeats extension checks.
 
 ## SECURITY
 
