@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   GmailClient,
   GmailApiError,
+  GmailMutationNotDispatched,
   headerValue,
   hasAttachmentOrUncertainty,
 } from "../../packages/integrations/gmail.ts";
@@ -379,4 +380,49 @@ test("Gmail mutations never automatically retry ambiguous provider errors", asyn
     GmailApiError,
   );
   assert.equal(attempts, 1);
+});
+
+test("Gmail checks dispatch authority after delayed token resolution", async () => {
+  let release: ((token: string) => void) | undefined;
+  let revoked = false,
+    calls = 0,
+    authorized = 0;
+  const token = new Promise<string>((resolve) => {
+    release = resolve;
+  });
+  const client = new GmailClient({
+    accessToken: () => token,
+    authorizeMutation: async () => {
+      authorized++;
+      if (revoked) throw new Error("synthetic lease revoked");
+      return Date.now() + 120000;
+    },
+    fetch: (async () => {
+      calls++;
+      return Response.json({});
+    }) as typeof fetch,
+  });
+  const pending = client.trashMessage("synthetic-id");
+  await Promise.resolve();
+  revoked = true;
+  release!("synthetic-token");
+  await assert.rejects(pending, /synthetic lease revoked/);
+  assert.equal(authorized, 1);
+  assert.equal(calls, 0);
+});
+test("expired final dispatch authorization sends no HTTP mutation", async () => {
+  let calls = 0;
+  const client = new GmailClient({
+    accessToken: "synthetic",
+    authorizeMutation: async () => Date.now() - 1,
+    fetch: (async () => {
+      calls++;
+      return Response.json({});
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    () => client.archiveMessage("synthetic-id"),
+    GmailMutationNotDispatched,
+  );
+  assert.equal(calls, 0);
 });

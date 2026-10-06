@@ -119,20 +119,30 @@ async function harness() {
       await this.token();
       return { messages: [{ id: fixture.message.id }] };
     }
+    async authorizeMutation() {
+      if (this.options.authorizeMutation) {
+        const expires = await this.options.authorizeMutation();
+        if (Date.now() >= expires) throw new mime.GmailMutationNotDispatched();
+      }
+    }
     async trashMessage(id) {
       await this.token();
+      await this.authorizeMutation();
       mutations.push({ kind: "trash", id });
     }
     async archiveMessage(id) {
       await this.token();
+      await this.authorizeMutation();
       mutations.push({ kind: "archive", id });
     }
     async untrashMessage(id) {
       await this.token();
+      await this.authorizeMutation();
       mutations.push({ kind: "untrash", id });
     }
     async restoreInbox(id) {
       await this.token();
+      await this.authorizeMutation();
       mutations.push({ kind: "restoreInbox", id });
     }
   }

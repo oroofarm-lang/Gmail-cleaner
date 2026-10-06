@@ -1359,6 +1359,34 @@ export default function App() {
                     <h2>EVERY ACTION. OUT IN THE OPEN.</h2>
                     <span>UNDO SUBJECT TO GMAIL RECOVERY</span>
                   </div>
+                  {!demoMode && (
+                    <section
+                      className="alert"
+                      aria-label="Interrupted action recovery"
+                    >
+                      <p>
+                        If a cleanup or Undo stopped unexpectedly, check
+                        interrupted actions after two minutes. This releases
+                        expired work without sending a Gmail change. Then review
+                        Activity and choose Undo explicitly. Uncertain status
+                        does not confirm that mail moved.
+                      </p>
+                      <button
+                        className="button secondary"
+                        disabled={!!busy}
+                        onClick={() =>
+                          void act(
+                            "reconcile",
+                            "gmail/reconcile",
+                            {},
+                            "Interrupted work checked. No Gmail change was sent; review uncertain actions before choosing Undo.",
+                          )
+                        }
+                      >
+                        Check interrupted actions
+                      </button>
+                    </section>
+                  )}
                   <div className="activity-list">
                     {data.activity.length ? (
                       data.activity.map((a) => (
@@ -1381,7 +1409,16 @@ export default function App() {
                             </time>
                             <h3>
                               {a.data.message ??
-                                `${fmt(a.data.total ?? 1)} ${demoMode ? "demo messages" : "message"} ${a.kind === "trash" ? "moved to Trash" : a.kind === "archive" ? "archived" : a.kind}`}
+                                ([
+                                  "uncertain",
+                                  "restore_uncertain",
+                                  "attempting",
+                                  "restoring",
+                                  "pending",
+                                  "failed",
+                                ].includes(a.status)
+                                  ? `Message ${a.status.replaceAll("_", " ")}: review recovery status`
+                                  : `${fmt(a.data.total ?? 1)} ${demoMode ? "demo messages" : "message"} ${a.kind === "trash" ? "moved to Trash" : a.kind === "archive" ? "archived" : a.kind}`)}
                             </h3>
                             <p>
                               {a.status === "undone"

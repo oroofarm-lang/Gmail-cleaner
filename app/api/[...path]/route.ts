@@ -512,7 +512,11 @@ async function handle(req: Request) {
       const columns =
         input.collection === "jobs"
           ? "id,source,cursor,processed,status,history_id,updated"
-          : "*";
+          : input.collection === "plans"
+            ? "id,source,data,status,created,expires"
+            : input.collection === "actions"
+              ? "id,source,plan_id,kind,data,created,status"
+              : "*";
       const result = await db
         .prepare(
           `SELECT ${columns} FROM ${input.collection} WHERE tenant=? AND id>? ORDER BY id LIMIT 201`,

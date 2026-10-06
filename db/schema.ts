@@ -4,6 +4,7 @@ export const tenants = sqliteTable("tenants", {
   settings: text("settings").notNull(),
   created: integer("created").notNull(),
   deleted: integer("deleted").notNull().default(0),
+  connectionEpoch: integer("connection_epoch").notNull().default(0),
 });
 export const groups = sqliteTable(
   "mail_groups",
@@ -35,6 +36,8 @@ export const plans = sqliteTable(
     status: text("status").notNull(),
     created: integer("created").notNull(),
     expires: integer("expires").notNull(),
+    owner: text("owner"),
+    lease: integer("lease").notNull().default(0),
   },
   (t) => [index("plans_tenant").on(t.tenant, t.created)],
 );
@@ -49,6 +52,8 @@ export const actions = sqliteTable(
     data: text("data").notNull(),
     created: integer("created").notNull(),
     status: text("status").notNull(),
+    owner: text("owner"),
+    lease: integer("lease").notNull().default(0),
   },
   (t) => [index("actions_tenant").on(t.tenant, t.created)],
 );
@@ -69,6 +74,7 @@ export const credentials = sqliteTable("credentials", {
   tenant: text("tenant").primaryKey(),
   encrypted: text("encrypted").notNull(),
   email: text("email").notNull(),
+  generation: text("generation").notNull().default("legacy"),
   updated: integer("updated").notNull(),
 });
 export const oauth = sqliteTable("oauth_transactions", {
@@ -76,6 +82,7 @@ export const oauth = sqliteTable("oauth_transactions", {
   tenant: text("tenant").notNull(),
   verifier: text("verifier").notNull(),
   expires: integer("expires").notNull(),
+  epoch: integer("epoch").notNull().default(0),
 });
 export const jobs = sqliteTable(
   "jobs",

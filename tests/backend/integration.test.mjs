@@ -10,7 +10,8 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const authSource =
   "export async function getChatGPTUser(){return globalThis.__backend.user}";
 const envSource = "export const env=globalThis.__backend.env";
-const gmailSource = `export class GmailClient {constructor(options){return new Proxy(globalThis.__backend.gmail,{get(target,name){const value=target[name];if(typeof value!=='function')return value;return async (...args)=>{if(typeof options.accessToken==='function')await options.accessToken();return value.apply(target,args);};}})}}
+const gmailSource = `export class GmailMutationNotDispatched extends Error {}
+export class GmailClient {constructor(options){return new Proxy(globalThis.__backend.gmail,{get(target,name){const value=target[name];if(typeof value!=='function')return value;return async (...args)=>{if(typeof options.accessToken==='function')await options.accessToken();if(['trashMessage','archiveMessage','untrashMessage','restoreInbox'].includes(name)&&options.authorizeMutation){const expires=await options.authorizeMutation();if(Date.now()>=expires)throw new GmailMutationNotDispatched();}return value.apply(target,args);};}})}}
 export const interpretCommand=()=>{},OpenAIClassifier=class {};
 export function headerValue(m,name){return m.payload?.headers?.find(h=>h.name.toLowerCase()===name.toLowerCase())?.value??''}
 export function hasAttachmentOrUncertainty(m){return !!m.payload?.parts?.some(p=>p.filename||p.body?.attachmentId)}
@@ -87,6 +88,8 @@ function d1(db) {
           return this.execute();
         },
         async first() {
+          if (globalThis.__backend.beforeQuery)
+            await globalThis.__backend.beforeQuery(sql);
           return this.execute().results[0] ?? null;
         },
         async run() {
@@ -117,6 +120,7 @@ CREATE TABLE oauth_transactions(state TEXT PRIMARY KEY,tenant TEXT NOT NULL,veri
 CREATE TABLE jobs(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,cursor TEXT,processed INTEGER NOT NULL,status TEXT NOT NULL,history_id TEXT,updated INTEGER NOT NULL,lease INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE messages(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,gmail_id TEXT NOT NULL,metadata TEXT NOT NULL,classification TEXT NOT NULL,updated INTEGER NOT NULL);`;
 beforeEach(() => {
+  globalThis.__backend.beforeQuery = null;
   sqlite?.close();
   sqlite = new DatabaseSync(":memory:");
   const migrations = readdirSync(path.join(root, "drizzle"))
@@ -312,7 +316,9 @@ async function setupLive() {
     .prepare("UPDATE tenants SET settings=? WHERE id=?")
     .run(JSON.stringify({ ...settings, source: "gmail" }), "A");
   sqlite
-    .prepare("INSERT INTO credentials VALUES(?,?,?,?)")
+    .prepare(
+      "INSERT INTO credentials(tenant,encrypted,email,updated) VALUES(?,?,?,?)",
+    )
     .run("A", "encrypted", "a@gmail.example", Date.now());
   const mailbox = new Map([["m1", liveMessage()]]);
   const calls = [];
@@ -522,7 +528,9 @@ test("OAuth state belongs to tenant, is single-use, and account replacement clea
   await demo("B");
   const plan = await request("gmail/preview", { ids: ["A:m1"] }, "A");
   sqlite
-    .prepare("INSERT INTO oauth_transactions VALUES(?,?,?,?)")
+    .prepare(
+      "INSERT INTO oauth_transactions(state,tenant,verifier,expires) VALUES(?,?,?,?)",
+    )
     .run("state-a", "A", "verifier-a", Date.now() + 300000);
   globalThis.__backend.gmail.getProfile = async () => ({
     emailAddress: "replacement@gmail.example",
@@ -823,4 +831,215 @@ test("failed preflight never gives Undo authority over a later manual user chang
     409,
   );
   assert.ok(mailbox.get("m1").labelIds.includes("TRASH"));
+});
+
+test("expired interrupted execution is released without replaying mutations", async () => {
+  const { calls } = await setupLive();
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  sqlite
+    .prepare(
+      "UPDATE plans SET status='executing',owner='crashed',lease=1 WHERE id=?",
+    )
+    .run(plan.data.id);
+  sqlite
+    .prepare(
+      "INSERT INTO actions(id,tenant,source,plan_id,kind,data,created,status,owner,lease) VALUES(?,?,'gmail',?,'trash',?,?,?,'crashed',1)",
+    )
+    .run(
+      "crashed-action",
+      "A",
+      plan.data.id,
+      JSON.stringify({ gmailId: "m1", originalLabels: ["INBOX"] }),
+      Date.now(),
+      "attempting",
+    );
+  const result = await request("gmail/reconcile", {});
+  assert.equal(result.status, 200);
+  assert.equal(calls.length, 0);
+  assert.equal(
+    sqlite
+      .prepare("SELECT status FROM actions WHERE id=?")
+      .get("crashed-action").status,
+    "uncertain",
+  );
+  assert.equal(
+    sqlite.prepare("SELECT status FROM plans WHERE id=?").get(plan.data.id)
+      .status,
+    "partial",
+  );
+  assert.equal(
+    (await request("gmail/execute", { planId: plan.data.id, approved: true }))
+      .status,
+    409,
+  );
+});
+test("reconciliation cannot release active leases or another tenant's work", async () => {
+  await setupLive();
+  await demo("B");
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  sqlite
+    .prepare(
+      "UPDATE plans SET status='executing',owner='live',lease=? WHERE id=?",
+    )
+    .run(Date.now() + 120000, plan.data.id);
+  await request("gmail/reconcile", {}, "B");
+  await request("gmail/reconcile", {}, "A");
+  assert.equal(
+    sqlite
+      .prepare("SELECT status,owner FROM plans WHERE id=?")
+      .get(plan.data.id).owner,
+    "live",
+  );
+});
+test("expired restoration becomes explicitly recoverable without automatic provider calls", async () => {
+  const { calls } = await setupLive();
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const action = sqlite
+    .prepare("SELECT id FROM actions WHERE tenant='A' AND kind='trash'")
+    .get();
+  sqlite
+    .prepare(
+      "UPDATE actions SET status='restoring',owner='crashed',lease=1 WHERE id=?",
+    )
+    .run(action.id);
+  const before = calls.length;
+  await request("gmail/reconcile", {});
+  assert.equal(calls.length, before);
+  assert.equal(
+    sqlite.prepare("SELECT status FROM actions WHERE id=?").get(action.id)
+      .status,
+    "restore_uncertain",
+  );
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    200,
+  );
+});
+
+test("stale execution owner cannot mutate after a successor takes its lease", async () => {
+  const { calls } = await setupLive();
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  globalThis.__backend.gmail.getThread = async () => {
+    sqlite
+      .prepare("UPDATE plans SET owner='successor',lease=? WHERE id=?")
+      .run(Date.now() + 120000, plan.data.id);
+    return {
+      id: "t1",
+      messages: [{ id: "m1", labelIds: ["INBOX", "CATEGORY_PROMOTIONS"] }],
+    };
+  };
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  assert.equal(calls.length, 0);
+  assert.equal(
+    sqlite.prepare("SELECT owner FROM plans WHERE id=?").get(plan.data.id)
+      .owner,
+    "successor",
+  );
+});
+test("pending preflight crash never acquires Undo authority during reconciliation", async () => {
+  await setupLive();
+  sqlite
+    .prepare(
+      "INSERT INTO actions(id,tenant,source,kind,data,created,status,owner,lease) VALUES('pending-crash','A','gmail','trash',?,?,'pending','expired',1)",
+    )
+    .run(
+      JSON.stringify({ gmailId: "m1", originalLabels: ["INBOX"] }),
+      Date.now(),
+    );
+  assert.equal((await request("gmail/reconcile", {})).status, 200);
+  assert.equal(
+    sqlite.prepare("SELECT status FROM actions WHERE id='pending-crash'").get()
+      .status,
+    "failed",
+  );
+  assert.equal(
+    (await request("gmail/undo", { actionId: "pending-crash" })).status,
+    409,
+  );
+});
+
+test("late token completion cannot dispatch expired cleanup after reconciliation", async () => {
+  const { mailbox, calls } = await setupLive();
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  const thread = globalThis.__backend.gmail.getThread;
+  let threads = 0;
+  globalThis.__backend.gmail.getThread = async (...args) => {
+    threads++;
+    return thread(...args);
+  };
+  let release, arrived;
+  const gate = new Promise((r) => (release = r)),
+    entered = new Promise((r) => (arrived = r));
+  let paused = false;
+  globalThis.__backend.beforeQuery = async (sql) => {
+    if (
+      !paused &&
+      threads > 0 &&
+      sql.startsWith("SELECT encrypted,updated,email")
+    ) {
+      paused = true;
+      arrived();
+      await gate;
+    }
+  };
+  const execute = request("gmail/execute", {
+    planId: plan.data.id,
+    approved: true,
+  });
+  await entered;
+  const now = Date.now;
+  Date.now = () => now() + 120001;
+  try {
+    assert.equal((await request("gmail/reconcile", {})).status, 200);
+    const action = sqlite
+      .prepare("SELECT id,status FROM actions WHERE plan_id=?")
+      .get(plan.data.id);
+    assert.equal(action.status, "failed");
+    assert.equal(
+      (await request("gmail/undo", { actionId: action.id })).status,
+      409,
+    );
+    release();
+    await execute;
+    assert.equal(calls.length, 0);
+    assert.ok(mailbox.get("m1").labelIds.includes("INBOX"));
+  } finally {
+    release();
+    await execute;
+    Date.now = now;
+    globalThis.__backend.beforeQuery = null;
+  }
+});
+
+test("fresh dispatch protection after token wait is preserved and has no Undo provenance", async () => {
+  const { mailbox, calls } = await setupLive();
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  let threads = 0,
+    changed = false;
+  const thread = globalThis.__backend.gmail.getThread;
+  globalThis.__backend.gmail.getThread = async (...args) => {
+    threads++;
+    return thread(...args);
+  };
+  globalThis.__backend.beforeQuery = async (sql) => {
+    if (
+      !changed &&
+      threads > 0 &&
+      sql.startsWith("SELECT encrypted,updated,email")
+    ) {
+      changed = true;
+      mailbox.get("m1").labelIds.push("STARRED");
+    }
+  };
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  assert.equal(calls.length, 0);
+  const action = sqlite
+    .prepare("SELECT id,status FROM actions WHERE plan_id=?")
+    .get(plan.data.id);
+  assert.equal(action.status, "failed");
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    409,
+  );
 });

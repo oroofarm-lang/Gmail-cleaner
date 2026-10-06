@@ -1,0 +1,674 @@
+import test, { beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { registerHooks } from "node:module";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import path from "node:path";
+import ts from "typescript";
+const root = fileURLToPath(new URL("../../", import.meta.url));
+const authSource =
+  "export async function getChatGPTUser(){return globalThis.__backend.user}";
+const envSource = "export const env=globalThis.__backend.env";
+const gmailSource = `export { GmailClient, GmailMutationNotDispatched, headerValue, hasAttachmentOrUncertainty } from '${pathToFileURL(path.join(root, "packages/integrations/gmail.ts")).href}';
+export const interpretCommand=()=>{},OpenAIClassifier=class {};
+export async function decryptTokens(){if(globalThis.__backend.decryptHook)await globalThis.__backend.decryptHook();return {access_token:'synthetic-old-account-token',expires_in:3600,refresh_token:'synthetic-refresh'}}
+export async function encryptTokens(){return 'encrypted-test-token'}
+export async function revokeGoogleToken(){}
+export async function exchangeGoogleCode(){return {access_token:'new-test-token',refresh_token:'test-refresh',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.modify'}}
+export const createOAuthTransaction=()=>({state:'new-synthetic-state',verifier:'synthetic-verifier',challenge:'synthetic-challenge',expiresAt:Date.now()+600000});
+export const buildGoogleAuthorizationUrl=()=> 'https://accounts.google.com/o/oauth2/v2/auth';
+export const refreshGoogleToken=()=>{};`;
+globalThis.__backend = { env: {}, user: null, gmail: null };
+registerHooks({
+  resolve(specifier, context, next) {
+    const source =
+      specifier === "cloudflare:workers"
+        ? envSource
+        : specifier === "@/app/chatgpt-auth"
+          ? authSource
+          : specifier === "@/packages/integrations"
+            ? gmailSource
+            : null;
+    if (source)
+      return {
+        url: `data:text/javascript,${encodeURIComponent(source)}`,
+        shortCircuit: true,
+      };
+    if (specifier.startsWith("@/")) {
+      let target = path.join(root, specifier.slice(2));
+      target = existsSync(`${target}.ts`)
+        ? `${target}.ts`
+        : path.join(target, "index.ts");
+      return { url: pathToFileURL(target).href, shortCircuit: true };
+    }
+    if (specifier.startsWith(".") && context.parentURL?.startsWith("file:")) {
+      const target = fileURLToPath(new URL(specifier, context.parentURL));
+      if (existsSync(`${target}.ts`))
+        return { url: pathToFileURL(`${target}.ts`).href, shortCircuit: true };
+    }
+    return next(specifier, context);
+  },
+  load(url, context, next) {
+    if (url.startsWith("file:") && url.endsWith(".ts"))
+      return {
+        format: "module",
+        source: ts.transpileModule(readFileSync(fileURLToPath(url), "utf8"), {
+          compilerOptions: {
+            target: ts.ScriptTarget.ES2022,
+            module: ts.ModuleKind.ESNext,
+          },
+        }).outputText,
+        shortCircuit: true,
+      };
+    return next(url, context);
+  },
+});
+const { POST, GET } = await import(
+  pathToFileURL(path.join(root, "app/api/[...path]/route.ts")).href
+);
+let sqlite;
+function d1(db) {
+  return {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) {
+          values = args;
+          return this;
+        },
+        execute() {
+          const statement = db.prepare(sql);
+          const rows = statement.all(...values);
+          return {
+            results: rows,
+            meta: { changes: Number(db.prepare("SELECT changes() n").get().n) },
+          };
+        },
+        async all() {
+          return this.execute();
+        },
+        async first() {
+          if (globalThis.__backend.beforeQuery)
+            await globalThis.__backend.beforeQuery(sql);
+          return this.execute().results[0] ?? null;
+        },
+        async run() {
+          if (globalThis.__backend.beforeRun)
+            await globalThis.__backend.beforeRun(sql);
+          return this.execute();
+        },
+      };
+    },
+    async batch(statements) {
+      db.exec("BEGIN");
+      try {
+        const results = statements.map((s) => s.execute());
+        db.exec("COMMIT");
+        return results;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  };
+}
+const schema = `CREATE TABLE tenants(id TEXT PRIMARY KEY,settings TEXT NOT NULL,created INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE mail_groups(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,sender TEXT NOT NULL,address TEXT NOT NULL,category TEXT NOT NULL,count INTEGER NOT NULL,bytes INTEGER NOT NULL,oldest INTEGER NOT NULL,newest INTEGER NOT NULL,protected INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 0,list_id TEXT,status TEXT NOT NULL DEFAULT 'active');
+CREATE TABLE plans(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,data TEXT NOT NULL,status TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER NOT NULL);
+CREATE TABLE actions(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,plan_id TEXT,kind TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL,status TEXT NOT NULL);
+CREATE TABLE rules(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,command TEXT NOT NULL,compiled TEXT NOT NULL,enabled INTEGER NOT NULL,authorized INTEGER NOT NULL,created INTEGER NOT NULL);
+CREATE TABLE credentials(tenant TEXT PRIMARY KEY,encrypted TEXT NOT NULL,email TEXT NOT NULL,updated INTEGER NOT NULL);
+CREATE TABLE oauth_transactions(state TEXT PRIMARY KEY,tenant TEXT NOT NULL,verifier TEXT NOT NULL,expires INTEGER NOT NULL);
+CREATE TABLE jobs(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,cursor TEXT,processed INTEGER NOT NULL,status TEXT NOT NULL,history_id TEXT,updated INTEGER NOT NULL,lease INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE messages(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,gmail_id TEXT NOT NULL,metadata TEXT NOT NULL,classification TEXT NOT NULL,updated INTEGER NOT NULL);`;
+beforeEach(() => {
+  globalThis.__backend.beforeQuery = null;
+  globalThis.__backend.beforeRun = null;
+  globalThis.__backend.decryptHook = null;
+  sqlite?.close();
+  sqlite = new DatabaseSync(":memory:");
+  const migrations = readdirSync(path.join(root, "drizzle"))
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  if (migrations.length)
+    for (const file of migrations)
+      sqlite.exec(readFileSync(path.join(root, "drizzle", file), "utf8"));
+  else sqlite.exec(schema);
+  Object.assign(globalThis.__backend.env, {
+    DB: d1(sqlite),
+    GOOGLE_CLIENT_ID: "test-id",
+    GOOGLE_CLIENT_SECRET: "test-secret",
+    TOKEN_ENCRYPTION_KEY: "test-key",
+  });
+  globalThis.__backend.user = { userId: "A", email: "a@example.com" };
+});
+async function request(endpoint, body, tenant = "A", options = {}) {
+  globalThis.__backend.user = tenant
+    ? { userId: tenant, email: `${tenant.toLowerCase()}@example.com` }
+    : null;
+  const method = body === undefined ? "GET" : "POST";
+  const req = new Request(`https://app.example/api/${endpoint}`, {
+    method,
+    headers: {
+      origin: "https://app.example",
+      "content-type": "application/json",
+      ...options.headers,
+    },
+    ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
+  });
+  const response = await (method === "POST" ? POST : GET)(req);
+  return {
+    status: response.status,
+    data: response.headers.get("content-type")?.includes("application/json")
+      ? await response.json()
+      : { location: response.headers.get("location") },
+  };
+}
+async function demo(tenant = "A") {
+  return (await request("demo", {}, tenant)).data;
+}
+function liveMessage(id = "m1", changes = {}) {
+  return {
+    id,
+    threadId: "t1",
+    internalDate: String(Date.now() - 400 * 86400000),
+    sizeEstimate: 1000,
+    labelIds: ["INBOX", "CATEGORY_PROMOTIONS"],
+    payload: {
+      mimeType: "text/plain",
+      headers: [
+        { name: "From", value: "offers@shop.example" },
+        { name: "Subject", value: "Seasonal sale" },
+      ],
+    },
+    ...changes,
+  };
+}
+async function setupLive() {
+  await demo();
+  const settings = JSON.parse(
+    sqlite.prepare("SELECT settings FROM tenants WHERE id=?").get("A").settings,
+  );
+  sqlite
+    .prepare("UPDATE tenants SET settings=? WHERE id=?")
+    .run(JSON.stringify({ ...settings, source: "gmail" }), "A");
+  sqlite
+    .prepare(
+      "INSERT INTO credentials(tenant,encrypted,email,updated) VALUES(?,?,?,?)",
+    )
+    .run("A", "encrypted", "a@gmail.example", Date.now());
+  const mailbox = new Map([["m1", liveMessage()]]);
+  const calls = [];
+  globalThis.__backend.gmail = {
+    async getMessage(id) {
+      return structuredClone(mailbox.get(id));
+    },
+    async getSafetyMessage(id) {
+      return structuredClone(mailbox.get(id));
+    },
+    async getThread() {
+      return {
+        id: "t1",
+        messages: [{ id: "m1", labelIds: ["INBOX", "CATEGORY_PROMOTIONS"] }],
+      };
+    },
+    async trashMessage(id) {
+      calls.push(["trash", id]);
+      mailbox.get(id).labelIds = ["CATEGORY_PROMOTIONS", "TRASH"];
+    },
+    async archiveMessage(id) {
+      calls.push(["archive", id]);
+      mailbox.get(id).labelIds = ["CATEGORY_PROMOTIONS"];
+    },
+    async untrashMessage(id) {
+      calls.push(["undo", id]);
+      mailbox.get(id).labelIds = ["CATEGORY_PROMOTIONS"];
+    },
+    async restoreInbox(id) {
+      mailbox.get(id).labelIds.push("INBOX");
+    },
+  };
+  const message = mailbox.get("m1");
+  const metadata = {
+    id: "m1",
+    threadId: "t1",
+    sender: "offers@shop.example",
+    subject: "Seasonal sale",
+    labels: message.labelIds,
+    date: Number(message.internalDate),
+    size: 1000,
+    replied: false,
+    attachment: false,
+  };
+  sqlite
+    .prepare("INSERT INTO messages VALUES(?,?,?,?,?,?)")
+    .run(
+      "A:m1",
+      "A",
+      "m1",
+      JSON.stringify(metadata),
+      JSON.stringify({ category: "promotion", action: "TRASH" }),
+      Date.now(),
+    );
+  globalThis.fetch = async (url, options) => {
+    const parsed = new URL(url),
+      parts = parsed.pathname.split("/");
+    const id = parts[parts.indexOf("messages") + 1];
+    if (options.method === "GET") {
+      if (parsed.pathname.includes("/threads/"))
+        return Response.json(await globalThis.__backend.gmail.getThread());
+      return Response.json(
+        await globalThis.__backend.gmail.getSafetyMessage(id),
+      );
+    }
+    if (globalThis.__backend.dispatchHook)
+      await globalThis.__backend.dispatchHook(url, options);
+    if (parsed.pathname.endsWith("/trash"))
+      await globalThis.__backend.gmail.trashMessage(id);
+    else if (parsed.pathname.endsWith("/untrash"))
+      await globalThis.__backend.gmail.untrashMessage(id);
+    else {
+      calls.push(["restoreInbox", id]);
+      await globalThis.__backend.gmail.restoreInbox(id);
+    }
+    return Response.json(mailbox.get(id));
+  };
+  globalThis.__backend.dispatchHook = null;
+  return { mailbox, calls };
+}
+async function cleanupPlan() {
+  const fixture = await setupLive();
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  assert.equal(plan.status, 200);
+  return { ...fixture, plan };
+}
+function stateAction(plan) {
+  return sqlite
+    .prepare("SELECT * FROM actions WHERE plan_id=?")
+    .get(plan.data.id);
+}
+function gate() {
+  let release, arrive;
+  return {
+    wait: new Promise((r) => (release = r)),
+    entered: new Promise((r) => (arrive = r)),
+    release: () => release(),
+    arrive: () => arrive(),
+  };
+}
+
+test("actual adapter: expired cleanup cannot dispatch after reconcile, and pending action cannot Undo", async () => {
+  const { plan, calls } = await cleanupPlan();
+  const g = gate();
+  let tokens = 0;
+  globalThis.__backend.decryptHook = async () => {
+    if (++tokens === 3) {
+      g.arrive();
+      await g.wait;
+    }
+  };
+  const task = request("gmail/execute", {
+    planId: plan.data.id,
+    approved: true,
+  });
+  await g.entered;
+  const real = Date.now;
+  Date.now = () => real() + 120001;
+  try {
+    assert.equal((await request("gmail/reconcile", {})).status, 200);
+    const a = stateAction(plan);
+    assert.equal(a.status, "failed");
+    assert.equal((await request("gmail/undo", { actionId: a.id })).status, 409);
+    g.release();
+    await task;
+    assert.equal(calls.length, 0);
+  } finally {
+    g.release();
+    await task;
+    Date.now = real;
+  }
+});
+
+test("actual adapter: newly starred at mutation token wait cannot dispatch or acquire Undo provenance", async () => {
+  const { plan, calls, mailbox } = await cleanupPlan();
+  let tokens = 0;
+  globalThis.__backend.decryptHook = async () => {
+    if (++tokens === 3) mailbox.get("m1").labelIds.push("STARRED");
+  };
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  assert.equal(calls.length, 0);
+  const a = stateAction(plan);
+  assert.equal(a.status, "failed");
+  assert.equal((await request("gmail/undo", { actionId: a.id })).status, 409);
+});
+
+test("actual adapter: response lost enters uncertain, explicit exact Undo restores and duplicate blocked", async () => {
+  const { plan, calls, mailbox } = await cleanupPlan();
+  globalThis.__backend.dispatchHook = async (url) => {
+    if (url.endsWith("/trash")) {
+      calls.push(["trash-response-lost", "m1"]);
+      mailbox.get("m1").labelIds = ["TRASH", "CATEGORY_PROMOTIONS"];
+      throw new Error("synthetic response loss");
+    }
+  };
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const a = stateAction(plan);
+  assert.equal(a.status, "uncertain");
+  globalThis.__backend.dispatchHook = null;
+  assert.equal((await request("gmail/undo", { actionId: a.id })).status, 200);
+  assert.ok(mailbox.get("m1").labelIds.includes("INBOX"));
+  assert.equal(
+    sqlite.prepare("SELECT status FROM actions WHERE id=?").get(a.id).status,
+    "undone",
+  );
+  assert.equal((await request("gmail/undo", { actionId: a.id })).status, 409);
+  assert.equal(calls.filter((c) => c[0] === "trash-response-lost").length, 1);
+});
+
+test("actual adapter: disconnect without reconnect during mutation token wait suppresses Undo", async () => {
+  const { plan, calls } = await cleanupPlan();
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const a = stateAction(plan),
+    g = gate();
+  let tokens = 0;
+  globalThis.__backend.decryptHook = async () => {
+    if (++tokens === 2) {
+      g.arrive();
+      await g.wait;
+    }
+  };
+  const task = request("gmail/undo", { actionId: a.id });
+  await g.entered;
+  const before = calls.length;
+  await request("gmail/disconnect", {});
+  g.release();
+  assert.equal((await task).status, 503);
+  assert.equal(calls.length, before);
+});
+
+test("actual adapter: disconnect and replacement account block captured-token Undo", async () => {
+  const { plan, calls } = await cleanupPlan();
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const a = stateAction(plan),
+    g = gate();
+  let tokens = 0;
+  globalThis.__backend.decryptHook = async () => {
+    if (++tokens === 2) {
+      g.arrive();
+      await g.wait;
+    }
+  };
+  const task = request("gmail/undo", { actionId: a.id });
+  await g.entered;
+  const before = calls.length;
+  await request("gmail/disconnect", {});
+  sqlite
+    .prepare(
+      "INSERT INTO credentials(tenant,encrypted,email,updated) VALUES(?,?,?,?)",
+    )
+    .run("A", "replacement-encrypted", "replacement@gmail.example", Date.now());
+  let dispatched = null;
+  globalThis.__backend.dispatchHook = async (url, options) => {
+    dispatched = { url, authorization: options.headers.Authorization };
+  };
+  g.release();
+  const result = await task;
+  assert.equal(calls.length, before);
+  assert.equal(dispatched, null);
+  assert.equal(result.status, 503);
+});
+
+test("actual adapter: expired Undo token completion cannot mutate after reconcile and successor Undo", async () => {
+  const { plan, calls } = await cleanupPlan();
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const a = stateAction(plan),
+    g = gate();
+  let tokens = 0;
+  globalThis.__backend.decryptHook = async () => {
+    if (++tokens === 2) {
+      g.arrive();
+      await g.wait;
+    }
+  };
+  const task = request("gmail/undo", { actionId: a.id });
+  await g.entered;
+  const real = Date.now;
+  Date.now = () => real() + 120001;
+  try {
+    assert.equal((await request("gmail/reconcile", {})).status, 200);
+    globalThis.__backend.decryptHook = null;
+    assert.equal((await request("gmail/undo", { actionId: a.id })).status, 200);
+    const before = calls.length;
+    g.release();
+    await task;
+    assert.equal(calls.length, before);
+    assert.equal(
+      sqlite.prepare("SELECT status FROM actions WHERE id=?").get(a.id).status,
+      "undone",
+    );
+  } finally {
+    g.release();
+    await task;
+    Date.now = real;
+  }
+});
+
+test("actual adapter: same-account generation replacement suppresses stale Undo", async () => {
+  const { plan, calls } = await cleanupPlan();
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const a = stateAction(plan),
+    g = gate();
+  let tokens = 0;
+  globalThis.__backend.decryptHook = async () => {
+    if (++tokens === 2) {
+      g.arrive();
+      await g.wait;
+    }
+  };
+  const task = request("gmail/undo", { actionId: a.id });
+  await g.entered;
+  const before = calls.length;
+  sqlite
+    .prepare(
+      "UPDATE credentials SET generation='new-connection' WHERE tenant='A'",
+    )
+    .run();
+  g.release();
+  assert.equal((await task).status, 503);
+  assert.equal(calls.length, before);
+});
+
+test("actual adapter: completed action cannot restore a different connected mailbox", async () => {
+  const { plan, calls } = await cleanupPlan();
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const action = stateAction(plan);
+  const before = calls.length;
+  await request("gmail/disconnect", {});
+  sqlite
+    .prepare(
+      "INSERT INTO credentials(tenant,encrypted,email,updated,generation) VALUES('A','synthetic-new','different@gmail.example',?,'new-mailbox')",
+    )
+    .run(Date.now());
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    409,
+  );
+  assert.equal(calls.length, before);
+});
+
+test("actual adapter: account swap between action lookup and Undo client cannot dispatch", async () => {
+  const { plan, calls } = await cleanupPlan();
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const action = stateAction(plan),
+    before = calls.length;
+  let swapped = false;
+  globalThis.__backend.beforeQuery = async (sql) => {
+    if (
+      !swapped &&
+      sql.startsWith("SELECT email,generation FROM credentials")
+    ) {
+      swapped = true;
+      sqlite
+        .prepare("UPDATE credentials SET email=?,generation=? WHERE tenant=?")
+        .run("replacement@gmail.example", "new-generation", "A");
+    }
+  };
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    409,
+  );
+  assert.equal(calls.length, before);
+  assert.equal(
+    sqlite.prepare("SELECT status FROM actions WHERE id=?").get(action.id)
+      .status,
+    "success",
+  );
+});
+
+test("actual adapter: consumed OAuth callback cannot reconnect after completed disconnect", async () => {
+  await setupLive();
+  sqlite
+    .prepare(
+      "INSERT INTO oauth_transactions(state,tenant,verifier,expires,epoch) VALUES(?,?,?,?,?)",
+    )
+    .run("synthetic-state", "A", "synthetic-verifier", Date.now() + 600000, 0);
+  const g = gate(),
+    originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (new URL(url).pathname.endsWith("/profile")) {
+      g.arrive();
+      await g.wait;
+      return Response.json({
+        emailAddress: "a@gmail.example",
+        messagesTotal: 1,
+        threadsTotal: 1,
+        historyId: "1",
+      });
+    }
+    return originalFetch(url, options);
+  };
+  const task = request(
+    "oauth/callback?state=synthetic-state&code=synthetic-code",
+  );
+  await g.entered;
+  assert.equal((await request("gmail/disconnect", {})).status, 200);
+  g.release();
+  assert.equal((await task).status, 409);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM credentials").get().n, 0);
+  assert.equal(
+    JSON.parse(
+      sqlite.prepare("SELECT settings FROM tenants WHERE id=?").get("A")
+        .settings,
+    ).source,
+    "demo",
+  );
+});
+
+test("actual adapter: connection replacement during final attempting CAS prevents dispatch", async () => {
+  const { plan, calls } = await cleanupPlan();
+  let replaced = false;
+  globalThis.__backend.beforeRun = async (sql) => {
+    if (
+      !replaced &&
+      sql.startsWith("UPDATE actions SET status='attempting',data=?")
+    ) {
+      replaced = true;
+      sqlite
+        .prepare("UPDATE credentials SET generation=? WHERE tenant=?")
+        .run("new-final-generation", "A");
+    }
+  };
+  const result = await request("gmail/execute", {
+    planId: plan.data.id,
+    approved: true,
+  });
+  assert.equal(replaced, true);
+  assert.equal(result.data.total, 0);
+  assert.equal(calls.length, 0);
+  assert.equal(stateAction(plan).status, "failed");
+});
+
+async function pendingCallback(profileEmail = "replacement@gmail.example") {
+  await setupLive();
+  sqlite
+    .prepare(
+      "INSERT INTO oauth_transactions(state,tenant,verifier,expires,epoch) VALUES(?,?,?,?,?)",
+    )
+    .run("older-state", "A", "synthetic-verifier", Date.now() + 600000, 0);
+  const g = gate(),
+    original = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (new URL(url).pathname.endsWith("/profile")) {
+      g.arrive();
+      await g.wait;
+      return Response.json({
+        emailAddress: profileEmail,
+        messagesTotal: 1,
+        threadsTotal: 1,
+        historyId: "1",
+      });
+    }
+    return original(url, options);
+  };
+  const task = request("oauth/callback?state=older-state&code=synthetic-code");
+  await g.entered;
+  return { task, g };
+}
+test("actual adapter: newer OAuth intent fences older callback without clearing inventory", async () => {
+  const { task, g } = await pendingCallback();
+  assert.equal((await request("oauth/start")).status, 302);
+  g.release();
+  assert.equal((await task).status, 409);
+  assert.equal(
+    sqlite.prepare("SELECT email FROM credentials WHERE tenant=?").get("A")
+      .email,
+    "a@gmail.example",
+  );
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM messages WHERE tenant=?").get("A").n,
+    1,
+  );
+  assert.ok(
+    sqlite
+      .prepare("SELECT state FROM oauth_transactions WHERE state=?")
+      .get("new-synthetic-state"),
+  );
+});
+test("actual adapter: deleted tenant fences consumed OAuth callback commit", async () => {
+  const { task, g } = await pendingCallback();
+  sqlite.prepare("UPDATE tenants SET deleted=1 WHERE id=?").run("A");
+  g.release();
+  assert.equal((await task).status, 409);
+  assert.equal(
+    sqlite.prepare("SELECT email FROM credentials WHERE tenant=?").get("A")
+      .email,
+    "a@gmail.example",
+  );
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM messages WHERE tenant=?").get("A").n,
+    1,
+  );
+});
+test("actual adapter: current OAuth intent connects and rotates generation without overwriting preferences", async () => {
+  const { task, g } = await pendingCallback("a@gmail.example");
+  const before = sqlite
+    .prepare("SELECT generation FROM credentials")
+    .get().generation;
+  sqlite
+    .prepare(
+      "UPDATE tenants SET settings=json_set(settings,'$.protectedSenders',json(?)) WHERE id=?",
+    )
+    .run(JSON.stringify(["preserve@example.com"]), "A");
+  g.release();
+  assert.equal((await task).status, 302);
+  assert.notEqual(
+    sqlite.prepare("SELECT generation FROM credentials").get().generation,
+    before,
+  );
+  const settings = JSON.parse(
+    sqlite.prepare("SELECT settings FROM tenants WHERE id=?").get("A").settings,
+  );
+  assert.equal(settings.source, "gmail");
+  assert.deepEqual(settings.protectedSenders, ["preserve@example.com"]);
+});

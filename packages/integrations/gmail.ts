@@ -95,6 +95,12 @@ export function headerValue(message: GmailMessage, name: string): string {
       .join(", ") ?? ""
   );
 }
+export class GmailMutationNotDispatched extends Error {
+  constructor() {
+    super("Gmail mutation authorization expired before dispatch");
+    this.name = "GmailMutationNotDispatched";
+  }
+}
 /** Token provider permits caller-managed expiry refresh; no credentials are logged or persisted. */
 export class GmailClient {
   private options: {
@@ -102,12 +108,14 @@ export class GmailClient {
     fetch?: typeof fetch;
     sleep?: (ms: number) => Promise<void>;
     maxRetries?: number;
+    authorizeMutation?: () => Promise<number>;
   };
   constructor(options: {
     accessToken: string | (() => Promise<string>);
     fetch?: typeof fetch;
     sleep?: (ms: number) => Promise<void>;
     maxRetries?: number;
+    authorizeMutation?: () => Promise<number>;
   }) {
     this.options = options;
   }
@@ -122,6 +130,11 @@ export class GmailClient {
         typeof this.options.accessToken === "function"
           ? await this.options.accessToken()
           : this.options.accessToken;
+      if (method !== "GET" && this.options.authorizeMutation) {
+        const expires = await this.options.authorizeMutation();
+        if (!Number.isFinite(expires) || Date.now() >= expires)
+          throw new GmailMutationNotDispatched();
+      }
       const response = await (this.options.fetch ?? fetch)(
         `https://gmail.googleapis.com/gmail/v1/users/me/${path}`,
         {

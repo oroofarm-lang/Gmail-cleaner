@@ -223,3 +223,94 @@ test("mobile accessibility, hidden navigation focus and all-screen reflow", asyn
     ).toHaveAttribute("aria-expanded", "false");
   }
 });
+
+test("synthetic live-mode accessibility for manual unsubscribe and interrupted recovery", async ({
+  page,
+}) => {
+  // UI-only fixtures; actual tenant/provider behavior is covered by SQLite route tests.
+  const writes: string[] = [];
+  await page.route("**/api/state", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    data.settings.source = "gmail";
+    data.connection = { email: "synthetic-mailbox@example.com" };
+    data.activity = [
+      {
+        id: "synthetic-uncertain",
+        kind: "trash",
+        status: "uncertain",
+        created: Date.now(),
+        data: {},
+      },
+    ];
+    await route.fulfill({ json: data });
+  });
+  const destination =
+    "https://newsletter.example.com/unsubscribe?token=" + "a".repeat(1200);
+  await page.route("**/api/gmail/unsubscribe-options", async (route) => {
+    writes.push("manual-options");
+    await route.fulfill({
+      json: {
+        reason: "No automatic unsubscribe request has been sent.",
+        sender: "newsletter@example.com",
+        account: "synthetic-mailbox@example.com",
+        gmailUrl: "https://mail.google.com/mail/",
+        search: "from:newsletter@example.com",
+        candidates: [{ kind: "https", url: destination }],
+        sent: false,
+      },
+    });
+  });
+  await page.route("**/api/gmail/reconcile", async (route) => {
+    writes.push("reconcile");
+    await route.fulfill({ json: { actions: 1, plans: 1, replayed: false } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?view=subscriptions");
+  await page
+    .getByRole("button", { name: "Unsubscribe", exact: false })
+    .first()
+    .click();
+  await page
+    .getByRole("button", { name: "Review manual options", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("link", { name: "Open Gmail" }),
+  ).toHaveAttribute("href", "https://mail.google.com/mail/");
+  await expect(
+    dialog.getByText("These destinations come from untrusted email headers.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("link", { name: destination, exact: true }),
+  ).toHaveAttribute("rel", "noopener noreferrer");
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.getByRole("button", { name: "Close confirmation" }).click();
+  await page.goto("/?view=activity");
+  await expect(
+    page.getByText("Message uncertain: review recovery status", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Check interrupted actions", exact: true })
+    .click();
+  await expect(
+    page.getByText("Interrupted work checked.", { exact: false }),
+  ).toBeVisible();
+  expect(writes).toEqual(["manual-options", "reconcile"]);
+  await page.unrouteAll({ behavior: "wait" });
+});

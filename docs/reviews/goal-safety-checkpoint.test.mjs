@@ -10,7 +10,8 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const authSource =
   "export async function getChatGPTUser(){return globalThis.__backend.user}";
 const envSource = "export const env=globalThis.__backend.env";
-const gmailSource = `export class GmailClient {constructor(options){return new Proxy(globalThis.__backend.gmail,{get(target,name){const value=target[name];if(typeof value!=='function')return value;return async (...args)=>{if(typeof options.accessToken==='function')await options.accessToken();return value.apply(target,args);};}})}}
+const gmailSource = `export class GmailMutationNotDispatched extends Error {}
+export class GmailClient {constructor(options){return new Proxy(globalThis.__backend.gmail,{get(target,name){const value=target[name];if(typeof value!=='function')return value;return async (...args)=>{if(typeof options.accessToken==='function')await options.accessToken();if(["trashMessage","archiveMessage","untrashMessage","restoreInbox"].includes(name)&&options.authorizeMutation){const expiry=await options.authorizeMutation();if(Date.now()>=expiry)throw new GmailMutationNotDispatched();}return value.apply(target,args);};}})}}
 export const interpretCommand=()=>{},OpenAIClassifier=class {};
 export function headerValue(m,name){return m.payload?.headers?.find(h=>h.name.toLowerCase()===name.toLowerCase())?.value??''}
 export function hasAttachmentOrUncertainty(m){return !!m.payload?.parts?.some(p=>p.filename||p.body?.attachmentId)}
@@ -184,7 +185,9 @@ async function setupLive() {
     .prepare("UPDATE tenants SET settings=? WHERE id=?")
     .run(JSON.stringify({ ...settings, source: "gmail" }), "A");
   sqlite
-    .prepare("INSERT INTO credentials VALUES(?,?,?,?)")
+    .prepare(
+      "INSERT INTO credentials(tenant,encrypted,email,updated) VALUES(?,?,?,?)",
+    )
     .run("A", "encrypted", "a@gmail.example", Date.now());
   const mailbox = new Map([["m1", liveMessage()]]);
   const calls = [];

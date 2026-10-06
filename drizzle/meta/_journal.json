@@ -15,6 +15,27 @@
       "when": 1791284393832,
       "tag": "0001_complete_weapon_omega",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791284935103,
+      "tag": "0002_spotty_bucky",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791302955374,
+      "tag": "0003_talented_talisman",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791303387254,
+      "tag": "0004_nostalgic_weapon_omega",
+      "breakpoints": true
     }
   ]
 }
