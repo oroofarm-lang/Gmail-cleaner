@@ -18,7 +18,7 @@ Sites was used to provision one owner-only private site and initialize its sourc
 
 ## GITHUB
 
-Target repository: https://github.com/oroofarm-lang/Gmail-cleaner. The complete implementation is published on `codex/sticker-bomb` at commit `120eb514639ef2f21eac639c7f39976834b74144`. Its tree SHA `da9fece47b57846e914c12eeda975baa57f660d3` was fetched from GitHub and exactly matches the tested local source tree. `main` contains the initial README only. Shell Git write credentials were unavailable; publication used the authenticated GitHub connector. Quality-gate and CodeQL workflows are included. No hosted CI success is asserted.
+Target repository: https://github.com/oroofarm-lang/Gmail-cleaner. The complete implementation is published on `codex/sticker-bomb` at commit `120eb514639ef2f21eac639c7f39976834b74144`. Its tree SHA `da9fece47b57846e914c12eeda975baa57f660d3` was fetched from GitHub and exactly matches the tested local source tree. `main` contains the initial README only. Shell Git write credentials were unavailable; publication used the authenticated GitHub connector. Quality-gate and CodeQL workflows are included. CodeQL passed on the initial PR run. The first Quality gates run exposed a missing Gitleaks GITHUB_TOKEN environment mapping and an onboarding selector that matched both demo availability and the demo entry button on a clean database; these were corrected. Final hosted quality result must be verified on the subsequent commit.
 
 ## DEPLOYMENT
 

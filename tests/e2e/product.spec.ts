@@ -9,13 +9,14 @@ test.beforeEach(async ({ page }) => {
   });
   const demoMode = page.getByText("DEMO MODE", { exact: true });
   // Wait for API-backed onboarding before inspecting state; main exists during loading.
-  await expect(signIn.or(demo).or(demoMode)).toBeVisible();
+  await expect(signIn.or(demo).or(demoMode).first()).toBeVisible();
   if (await signIn.isVisible()) {
     await signIn.click();
-    await expect(demo.or(demoMode)).toBeVisible();
+    await expect(demo.or(demoMode).first()).toBeVisible();
   }
   if (await demo.isVisible()) await demo.click();
   await expect(demoMode).toBeVisible();
+  await expect(page.locator(".hero-number")).toBeVisible();
   if ((await page.locator("html").getAttribute("data-theme")) === "dark") {
     await page
       .getByRole("button", { name: "Toggle light and dark appearance" })

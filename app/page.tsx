@@ -1523,7 +1523,7 @@ export default function App() {
                         }
                       >
                         <option value="system">System</option>
-                        <option value="light">Light · warm paper</option>
+                        <option value="light">Light · clean white</option>
                         <option value="dark">Dark · ink after hours</option>
                       </select>
                     </label>

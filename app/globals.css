@@ -2830,3 +2830,9 @@ footer > span > span:last-child {
     max-width: 100%;
   }
 }
+
+/* Native controls follow the same monochrome interface palette. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--ink);
+}
