@@ -1,0 +1,13 @@
+# Privacy notice — draft, not a published legal notice
+
+Status: public Gmail launch blocked. The legal controller's identity, postal address, privacy contact, actual hosting region and processor contracts must be completed before public use. This document describes the intended boundary and known gaps as of 2026-10-05.
+
+Inbox Agent helps users review and maintain their Gmail inbox. Demo mode uses synthetic sender groups. Live functionality, once configured and tested, may process account email address, sender/recipient headers, subject/snippet, dates, labels, sizes, classification, user rules, cleanup plans and action history. OAuth refresh tokens belong only on the server in an authenticated encrypted envelope. Email bodies and attachments are not needed for routine cleanup. The extension saves only a user-entered HTTPS dashboard URL locally and neither reads Gmail nor transmits mailbox data.
+
+Google data is used only for the inbox functionality the user authorizes. We do not sell it or use it for advertising, credit scoring or generalized model training. Human access to private email requires a policy-approved exception such as explicit support consent or security/legal necessity. Any AI sharing requires distinct informed consent before metadata is sent. `store:false` is a request parameter, not a guarantee of zero provider retention. Until processor policy and contractual terms are reviewed, do not enable real email sharing with AI.
+
+Intended limited-use statement for the owned production policy page: Inbox Agent's use and transfer of information received from Google APIs will adhere to the Google API Services User Data Policy and Chrome Web Store User Data Policy, including their Limited Use requirements. This statement is a commitment to implement and verify, not evidence of current certification.
+
+The settings experience must offer disconnect/revoke, export, local data deletion and a clear explanation of backup deletion latency. Disconnecting must stop queued jobs and remove usable credentials; deleting local account data does not delete the user's Gmail mailbox. Users can also revoke access through their Google account. Full live revoke/deletion/retention behavior and all backup copies remain to be exercised. Do not promise an SLA until the retention jobs and restore tests exist.
+
+Sources: [Google user data policy](https://developers.google.com/terms/api-services-user-data-policy), [Chrome Limited Use](https://developer.chrome.com/docs/webstore/program-policies/limited-use), [Google scope rules](https://developers.google.com/workspace/gmail/api/auth/scopes). Draft retention and processors are in `retention.md` and `subprocessors.md`.
