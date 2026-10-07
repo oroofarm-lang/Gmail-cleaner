@@ -25,3 +25,7 @@ D1 `jobs.cursor` stores the current full/history phase, opaque page cursor, swee
 ## Scheduled scans
 
 `sync_schedules` stores explicit tenant opt-in, frequency, next due time, account generation, lease/owner and fixed status/error codes. Only safe preference/status fields are returned in state and export; owner, lease and generation are excluded. Disconnect, OAuth reconnection and data/account deletion pause or remove schedules. `scheduler_health` stores global runtime timestamps without tenant IDs, mailbox content or credentials. The scheduled worker reads only the five-message metadata unit and never executes rules or cleanup plans.
+
+## OAuth application permission
+
+Credentials contain a nonsecret app permission (`readonly` or `modify`) alongside encrypted tokens and account generation. State returns permission to explain available actions; credentials still remain excluded from export. OAuth transactions additionally record requested scope and, for upgrades, the pinned account email. They are server-only, single-use and epoch-fenced. Refresh preserves previously validated scope when the provider omits it. Neither a browser parameter nor a combined provider grant can upgrade the stored app permission without the explicit upgrade transaction.

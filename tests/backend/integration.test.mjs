@@ -15,7 +15,7 @@ export class GmailClient {constructor(options){return new Proxy(globalThis.__bac
 export const interpretCommand=()=>{},OpenAIClassifier=class {};
 export function headerValue(m,name){return m.payload?.headers?.find(h=>h.name.toLowerCase()===name.toLowerCase())?.value??''}
 export function hasAttachmentOrUncertainty(m){return !!m.payload?.parts?.some(p=>p.filename||p.body?.attachmentId)}
-export async function decryptTokens(){return {access_token:'test-token',expires_in:3600,refresh_token:'test-refresh'}}
+export async function decryptTokens(){return {access_token:'test-token',expires_in:3600,refresh_token:'test-refresh',scope:'https://www.googleapis.com/auth/gmail.modify'}}
 export async function encryptTokens(){return 'encrypted-test-token'}
 export async function revokeGoogleToken(){}
 export async function exchangeGoogleCode(){return {access_token:'new-test-token',refresh_token:'test-refresh',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.modify'}}
@@ -379,6 +379,9 @@ async function setupLive() {
       JSON.stringify({ category: "promotion", action: "TRASH" }),
       Date.now(),
     );
+  sqlite
+    .prepare("UPDATE credentials SET permission='modify' WHERE tenant='A'")
+    .run();
   return { mailbox, calls };
 }
 test("actual Gmail handler revalidates a newly protected sender", async () => {

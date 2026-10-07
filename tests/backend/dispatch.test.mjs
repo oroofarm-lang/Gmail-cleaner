@@ -12,12 +12,12 @@ const authSource =
 const envSource = "export const env=globalThis.__backend.env";
 const gmailSource = `export { GmailClient, GmailMutationNotDispatched, headerValue, hasAttachmentOrUncertainty } from '${pathToFileURL(path.join(root, "packages/integrations/gmail.ts")).href}';
 export const interpretCommand=()=>{},OpenAIClassifier=class {};
-export async function decryptTokens(){if(globalThis.__backend.decryptHook)await globalThis.__backend.decryptHook();return {access_token:'synthetic-old-account-token',expires_in:3600,refresh_token:'synthetic-refresh'}}
+export async function decryptTokens(){if(globalThis.__backend.decryptHook)await globalThis.__backend.decryptHook();return {access_token:'synthetic-old-account-token',expires_in:3600,refresh_token:'synthetic-refresh',scope:'https://www.googleapis.com/auth/gmail.modify'}}
 export async function encryptTokens(){return 'encrypted-test-token'}
 export async function revokeGoogleToken(){}
-export async function exchangeGoogleCode(){return {access_token:'new-test-token',refresh_token:'test-refresh',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.modify'}}
+export async function exchangeGoogleCode(){if(globalThis.__backend.oauthTokens)return globalThis.__backend.oauthTokens;return {access_token:'new-test-token',refresh_token:'test-refresh',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.modify'}}
 export const createOAuthTransaction=()=>({state:'new-synthetic-state',verifier:'synthetic-verifier',challenge:'synthetic-challenge',expiresAt:Date.now()+600000});
-export const buildGoogleAuthorizationUrl=()=> 'https://accounts.google.com/o/oauth2/v2/auth';
+export const buildGoogleAuthorizationUrl=(options)=>{globalThis.__backend.authorization=options;return 'https://accounts.google.com/o/oauth2/v2/auth'};
 export const refreshGoogleToken=()=>{};`;
 globalThis.__backend = { env: {}, user: null, gmail: null };
 registerHooks({
@@ -128,6 +128,8 @@ beforeEach(() => {
   globalThis.__backend.beforeQuery = null;
   globalThis.__backend.beforeRun = null;
   globalThis.__backend.decryptHook = null;
+  globalThis.__backend.oauthTokens = null;
+  globalThis.__backend.authorization = null;
   sqlite?.close();
   sqlite = new DatabaseSync(":memory:");
   const migrations = readdirSync(path.join(root, "drizzle"))
@@ -277,6 +279,9 @@ async function setupLive() {
     return Response.json(mailbox.get(id));
   };
   globalThis.__backend.dispatchHook = null;
+  sqlite
+    .prepare("UPDATE credentials SET permission='modify' WHERE tenant='A'")
+    .run();
   return { mailbox, calls };
 }
 async function cleanupPlan() {
@@ -440,6 +445,8 @@ test("actual adapter: expired Undo token completion cannot mutate after reconcil
   try {
     assert.equal((await request("gmail/reconcile", {})).status, 200);
     globalThis.__backend.decryptHook = null;
+    globalThis.__backend.oauthTokens = null;
+    globalThis.__backend.authorization = null;
     assert.equal((await request("gmail/undo", { actionId: a.id })).status, 200);
     const before = calls.length;
     g.release();
@@ -508,7 +515,7 @@ test("actual adapter: account swap between action lookup and Undo client cannot 
   globalThis.__backend.beforeQuery = async (sql) => {
     if (
       !swapped &&
-      sql.startsWith("SELECT email,generation FROM credentials")
+      sql.startsWith("SELECT email,generation,permission FROM credentials")
     ) {
       swapped = true;
       sqlite
@@ -1193,4 +1200,229 @@ test("scheduler: permission403 still suspends and requires reauthentication", as
   assert.equal(row.enabled, 0);
   assert.equal(row.status, "reauth_required");
   assert.equal(row.last_error, "reauth_required");
+});
+
+async function consentCallback({
+  scope = "readonly",
+  email = null,
+  granted = "modify",
+} = {}) {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, options) =>
+    new URL(url).pathname.endsWith("/profile")
+      ? Response.json({
+          emailAddress: email ?? "a@gmail.example",
+          historyId: "100",
+        })
+      : original(url, options);
+  globalThis.__backend.oauthTokens = {
+    access_token: "synthetic",
+    refresh_token: "synthetic",
+    expires_in: 3600,
+    scope: `https://www.googleapis.com/auth/gmail.${granted}`,
+  };
+  sqlite
+    .prepare(
+      "INSERT INTO oauth_transactions(state,tenant,verifier,expires,epoch,requested_scope,account_email) VALUES('scope-state','A','fixture',?,0,?,?)",
+    )
+    .run(
+      Date.now() + 600000,
+      scope,
+      scope === "modify" ? "a@gmail.example" : null,
+    );
+  return request("oauth/callback?state=scope-state&code=fixture");
+}
+test("OAuth: initial connection requests read-only even if browser asks for modify", async () => {
+  await setupLive();
+  assert.equal((await request("oauth/start?permission=modify")).status, 302);
+  assert.equal(globalThis.__backend.authorization.scope, "readonly");
+  const row = sqlite
+    .prepare("SELECT requested_scope,account_email FROM oauth_transactions")
+    .get();
+  assert.equal(row.requested_scope, "readonly");
+  assert.equal(row.account_email, null);
+});
+test("OAuth: upgrade requires explicit strict approval and a connected tenant account", async () => {
+  await demo();
+  assert.equal(
+    (await request("oauth/upgrade", { approved: true })).status,
+    409,
+  );
+  await setupLive();
+  assert.equal(
+    (await request("oauth/upgrade", { approved: false })).status,
+    400,
+  );
+  assert.equal(
+    (await request("oauth/upgrade", { approved: true, tenant: "B" })).status,
+    400,
+  );
+  const result = await request("oauth/upgrade", { approved: true });
+  assert.equal(result.status, 200);
+  assert.equal(globalThis.__backend.authorization.scope, "modify");
+  assert.equal(
+    sqlite.prepare("SELECT account_email FROM oauth_transactions").get()
+      .account_email,
+    "a@gmail.example",
+  );
+  assert.equal(
+    new URL(result.data.authorizationUrl).origin,
+    "https://accounts.google.com",
+  );
+});
+test("OAuth: combined Google grant cannot upgrade an app read-only request", async () => {
+  const { calls } = await setupLive();
+  assert.equal((await consentCallback()).status, 302);
+  assert.equal(
+    sqlite.prepare("SELECT permission FROM credentials").get().permission,
+    "readonly",
+  );
+  const plan = await request("gmail/preview", { ids: ["A:m1"] });
+  assert.equal(plan.status, 200);
+  const before = calls.length;
+  assert.equal(
+    (await request("gmail/execute", { planId: plan.data.id, approved: true }))
+      .status,
+    403,
+  );
+  assert.equal(calls.length, before);
+});
+test("OAuth: actual read-only scope connects while wrong upgrade grant preserves old credentials", async () => {
+  await setupLive();
+  const before = sqlite
+    .prepare("SELECT generation FROM credentials")
+    .get().generation;
+  assert.equal(
+    (await consentCallback({ scope: "modify", granted: "readonly" })).status,
+    403,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT generation FROM credentials").get().generation,
+    before,
+  );
+  assert.equal((await consentCallback({ granted: "readonly" })).status, 302);
+  assert.equal(
+    sqlite.prepare("SELECT permission FROM credentials").get().permission,
+    "readonly",
+  );
+});
+test("OAuth: upgrade cannot replace the connected account", async () => {
+  await setupLive();
+  const before = sqlite.prepare("SELECT * FROM credentials").get();
+  assert.equal(
+    (
+      await consentCallback({
+        scope: "modify",
+        email: "different@gmail.example",
+      })
+    ).status,
+    409,
+  );
+  assert.deepEqual(sqlite.prepare("SELECT * FROM credentials").get(), before);
+});
+test("OAuth: explicit same-account modify grant enables changes and invalidates schedule consent", async () => {
+  await setupLive();
+  sqlite
+    .prepare(
+      "INSERT INTO sync_schedules(tenant,enabled,generation) VALUES('A',1,'old')",
+    )
+    .run();
+  assert.equal((await consentCallback({ scope: "modify" })).status, 302);
+  assert.equal(
+    sqlite.prepare("SELECT permission FROM credentials").get().permission,
+    "modify",
+  );
+  assert.equal(
+    sqlite.prepare("SELECT enabled FROM sync_schedules").get().enabled,
+    0,
+  );
+});
+test("OAuth: denied callback consumes state and cannot be replayed", async () => {
+  await setupLive();
+  await request("oauth/start");
+  assert.equal(
+    (
+      await request(
+        "oauth/callback?state=new-synthetic-state&error=access_denied",
+      )
+    ).status,
+    302,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM oauth_transactions").get().n,
+    0,
+  );
+  assert.equal(
+    (await request("oauth/callback?state=new-synthetic-state&code=fixture"))
+      .status,
+    400,
+  );
+});
+test("OAuth: read-only credentials block Undo before provider access", async () => {
+  const { plan, calls } = await cleanupPlan();
+  await request("gmail/execute", { planId: plan.data.id, approved: true });
+  const action = stateAction(plan);
+  sqlite.prepare("UPDATE credentials SET permission='readonly'").run();
+  const before = calls.length;
+  assert.equal(
+    (await request("gmail/undo", { actionId: action.id })).status,
+    403,
+  );
+  assert.equal(calls.length, before);
+});
+
+test("OAuth: older callback account replacement prevents captured-account upgrade intent", async () => {
+  const { task, g } = await pendingCallback("different@gmail.example");
+  let raced = false;
+  globalThis.__backend.beforeQuery = async (sql) => {
+    if (
+      !raced &&
+      sql.startsWith("UPDATE tenants SET connection_epoch=connection_epoch+1")
+    ) {
+      raced = true;
+      g.release();
+      assert.equal((await task).status, 302);
+    }
+  };
+  assert.equal(
+    (await request("oauth/upgrade", { approved: true })).status,
+    409,
+  );
+  assert.ok(raced);
+  assert.equal(
+    sqlite.prepare("SELECT email FROM credentials").get().email,
+    "different@gmail.example",
+  );
+  assert.equal(
+    sqlite
+      .prepare(
+        "SELECT COUNT(*) n FROM oauth_transactions WHERE requested_scope='modify'",
+      )
+      .get().n,
+    0,
+  );
+});
+test("OAuth: modify callback commit cannot overwrite a changed current account", async () => {
+  await setupLive();
+  let changed = false;
+  globalThis.__backend.beforeQuery = async (sql) => {
+    if (!changed && sql.startsWith("SELECT encrypted,email FROM credentials")) {
+      changed = true;
+      sqlite
+        .prepare(
+          "UPDATE credentials SET email='different@gmail.example',generation='replacement'",
+        )
+        .run();
+    }
+  };
+  assert.equal((await consentCallback({ scope: "modify" })).status, 409);
+  assert.ok(changed);
+  assert.equal(
+    sqlite.prepare("SELECT email FROM credentials").get().email,
+    "different@gmail.example",
+  );
+  assert.equal(
+    sqlite.prepare("SELECT generation FROM credentials").get().generation,
+    "replacement",
+  );
 });

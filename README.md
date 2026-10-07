@@ -22,7 +22,7 @@ Click **Explore a demo**. The server seeds 13 synthetic aggregate groups represe
 - Authenticated tenant-scoped D1 state, report, sender groups, protected mail, subscriptions.
 - Persistent demo cleanup with atomic plan claim, revision validation, idempotency, activity and Undo.
 - Conservative deterministic rules; approved sender protection; paged export of preferences, rules, inventory, plans, actions and jobs, and deletion controls.
-- Gmail OAuth PKCE/single-use state, AES-GCM encrypted tokens, refresh with account/generation-bound compare-and-swap, revocation and epoch-fenced cancellation of in-flight callbacks.
+- Gmail OAuth starts readonly, requires explicit same-account permission upgrade for cleanup/Undo, and enforces local/token/dispatch permissions. PKCE/single-use state, AES-GCM encrypted tokens, refresh with account/generation-bound compare-and-swap, revocation and epoch-fenced cancellation of in-flight callbacks.
 - Resumable read-only Gmail full/history synchronization using body-free MIME/metadata projection, atomic inventory/cursor commits, generation-bound leases, safe history-expiry full resync, complete-sweep pruning and persistent pagination-cycle detection. UI can pause after the current page and resume or restart interrupted inventory.
 - Message-level Gmail plans, explicit approval, fresh thread/protection/MIME checks, tenant serialization, provider action ledger, conservative uncertain state and Undo.
 - Optional OpenAI Responses intent/classification adapters with strict schemas, no tools, metadata minimization and deterministic policy authority.

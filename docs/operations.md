@@ -33,3 +33,7 @@ The operator must package cron explicitly with `INBOX_BUILD_SYNC_CRON=true` and 
 Failures use only fixed codes. Transient failures back off exponentially (up to one hour); five consecutive failures pause the schedule.401/403 suspend immediately and require reconnect/re-enable. Inspect health timestamps, schedule status and processed counts without logging provider bodies or email. User-enabled schedules do not authorize mailbox mutations. History polling is implemented; Gmail Pub/Sub/watch renewal is not implemented and must not be advertised as available.
 
 `npm run test:scheduler-runtime` runs the built production handler against isolated temporary local D1 with provider secrets blank. It verifies native event dispatch and health persistence, without a mailbox. This is local runtime evidence, not deployed cron or real Gmail verification.
+
+## Gmail permission migration
+
+Drain old workers before migration0008. Existing credentials and pending OAuth transactions default to app read-only; this deliberately requires an explicit user upgrade before cleanup or Undo. Scanning and previews remain available. Settings → Allow mailbox changes → Continue to Google creates a strict, account-bound upgrade; Google approval does not approve any cleanup plan. Switching accounts during upgrade fails rather than replacing the connection. Reconnect defaults readonly and cancels scheduled consent. Actual Google consent/grant/refresh behavior still requires authorized disposable-account testing.

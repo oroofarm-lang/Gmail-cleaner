@@ -151,7 +151,9 @@ export async function state(t: Awaited<ReturnType<typeof tenant>>) {
       .bind(t.id, source)
       .first(),
     db
-      .prepare("SELECT email,updated FROM credentials WHERE tenant=?")
+      .prepare(
+        "SELECT email,updated,permission FROM credentials WHERE tenant=?",
+      )
       .bind(t.id)
       .first(),
     db

@@ -413,3 +413,55 @@ test("synthetic scheduled-scan consent and pause keep cleanup approval explicit"
   ]);
   await page.unrouteAll({ behavior: "wait" });
 });
+
+test("synthetic read-only connection requires an explicit Google permission upgrade", async ({
+  page,
+}) => {
+  const response = await page.request.get("/api/state");
+  const fixture = await response.json();
+  fixture.settings.source = "gmail";
+  fixture.connection = {
+    email: "synthetic@gmail.example",
+    permission: "readonly",
+  };
+  fixture.capabilities.gmailOAuth = true;
+  let upgrades = 0;
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  await page.route("**/api/oauth/upgrade", async (route) => {
+    upgrades++;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ approved: true });
+    await route.fulfill({
+      json: {
+        authorizationUrl:
+          "https://accounts.google.com/o/oauth2/v2/auth?synthetic=1",
+      },
+    });
+  });
+  await page.route("https://accounts.google.com/**", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<title>Synthetic Google consent</title><p>Intercepted; no Google connection.</p>",
+    }),
+  );
+  await page.goto("/?view=settings");
+  await expect(
+    page.getByText("read-only scans and previews", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Allow mailbox changes" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "Allow Gmail mailbox changes?" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("This does not approve cleanup.", { exact: false }),
+  ).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(upgrades).toBe(0);
+  await page.getByRole("button", { name: "Allow mailbox changes" }).click();
+  await dialog.getByRole("button", { name: "Continue to Google" }).click();
+  await expect(page).toHaveTitle("Synthetic Google consent");
+  expect(upgrades).toBe(1);
+  await page.unrouteAll({ behavior: "wait" });
+});

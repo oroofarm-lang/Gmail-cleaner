@@ -73,6 +73,7 @@ export const rules = sqliteTable(
 export const credentials = sqliteTable("credentials", {
   tenant: text("tenant").primaryKey(),
   encrypted: text("encrypted").notNull(),
+  permission: text("permission").notNull().default("readonly"),
   email: text("email").notNull(),
   generation: text("generation").notNull().default("legacy"),
   updated: integer("updated").notNull(),
@@ -81,6 +82,8 @@ export const oauth = sqliteTable("oauth_transactions", {
   state: text("state").primaryKey(),
   tenant: text("tenant").notNull(),
   verifier: text("verifier").notNull(),
+  requestedScope: text("requested_scope").notNull().default("readonly"),
+  accountEmail: text("account_email"),
   expires: integer("expires").notNull(),
   epoch: integer("epoch").notNull().default(0),
 });

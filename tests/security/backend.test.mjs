@@ -158,6 +158,7 @@ async function harness() {
         access_token: "refreshed-old-account",
         refresh_token: "fixture-refresh",
         token_type: "Bearer",
+        scope: "https://www.googleapis.com/auth/gmail.modify",
         expires_in: 3600,
       };
     },
@@ -168,6 +169,7 @@ async function harness() {
         access_token: "fixture-token",
         refresh_token: "fixture-refresh",
         token_type: "Bearer",
+        scope: "https://www.googleapis.com/auth/gmail.modify",
         expires_in: 3600,
         scope: "https://www.googleapis.com/auth/gmail.modify",
       };
@@ -271,6 +273,7 @@ async function harness() {
       refresh_token: "fixture",
       expires_in: 3600,
       token_type: "Bearer",
+      scope: "https://www.googleapis.com/auth/gmail.modify",
     };
     const encrypted = await oauth.encryptTokens(
       tokens,
@@ -279,7 +282,7 @@ async function harness() {
     );
     sqlite
       .prepare(
-        "INSERT OR REPLACE INTO credentials(tenant,encrypted,email,updated) VALUES(?,?,?,?)",
+        "INSERT OR REPLACE INTO credentials(tenant,encrypted,email,updated,permission) VALUES(?,?,?,?,'modify')",
       )
       .run(userId, encrypted, "gmail@example.org", Date.now());
     const current = JSON.parse(
@@ -494,6 +497,7 @@ test("actual credential refresh cannot overwrite a concurrently reconnected Gmai
         access_token: "new-account",
         refresh_token: "new-refresh",
         token_type: "Bearer",
+        scope: "https://www.googleapis.com/auth/gmail.modify",
         expires_in: 3600,
       },
       h.env.TOKEN_ENCRYPTION_KEY,

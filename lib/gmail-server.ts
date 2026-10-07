@@ -45,7 +45,7 @@ async function renewLease(
   const expires = Date.now() + ACTION_LEASE_MS;
   const renewed = await binding()
     .prepare(
-      `UPDATE ${table} SET lease=? WHERE id=? AND tenant=? AND owner=? AND lease>? AND ${table === "plans" ? "status='executing'" : "status IN ('pending','attempting','restoring')"} AND EXISTS(SELECT 1 FROM tenants WHERE id=? AND deleted=0) AND EXISTS(SELECT 1 FROM credentials WHERE tenant=?${account ? " AND email=? AND generation=?" : ""})`,
+      `UPDATE ${table} SET lease=? WHERE id=? AND tenant=? AND owner=? AND lease>? AND ${table === "plans" ? "status='executing'" : "status IN ('pending','attempting','restoring')"} AND EXISTS(SELECT 1 FROM tenants WHERE id=? AND deleted=0) AND EXISTS(SELECT 1 FROM credentials WHERE tenant=?${account ? " AND email=? AND generation=? AND permission='modify'" : ""})`,
     )
     .bind(
       expires,
@@ -75,9 +75,11 @@ export async function clientFor(
   const c = oauthConfig(req),
     db = binding();
   const initial = await db
-    .prepare("SELECT email,generation FROM credentials WHERE tenant=?")
+    .prepare(
+      "SELECT email,generation,permission FROM credentials WHERE tenant=?",
+    )
     .bind(t.id)
-    .first<GmailAccount>();
+    .first<GmailAccount & { permission: string }>();
   if (!initial) throw new ApiError(409, "Connect Gmail first.");
   if (
     expectedAccount &&
@@ -85,6 +87,11 @@ export async function clientFor(
       initial.generation !== expectedAccount.generation)
   )
     throw new ApiError(409, "Gmail account changed.");
+  if (authorizeMutation && initial.permission !== "modify")
+    throw new ApiError(
+      403,
+      "Allow mailbox changes in Settings before cleanup or Undo.",
+    );
   const pinnedEmail = initial.email;
   return new GmailClient({
     maxRetries: readOptions.maxRetries,
@@ -116,7 +123,7 @@ export async function clientFor(
       const currentConnection = async () => {
         const valid = await db
           .prepare(
-            "SELECT tenant FROM credentials WHERE tenant=? AND email=? AND generation=?",
+            `SELECT tenant FROM credentials WHERE tenant=? AND email=? AND generation=?${authorizeMutation ? " AND permission='modify'" : ""}`,
           )
           .bind(t.id, pinnedEmail, initial.generation)
           .first();
@@ -137,6 +144,7 @@ export async function clientFor(
         });
         tokens = {
           ...next,
+          scope: next.scope ?? tokens.scope,
           refresh_token: next.refresh_token ?? tokens.refresh_token,
         };
         const refreshed = await db
@@ -158,6 +166,16 @@ export async function clientFor(
             "Gmail connection changed during refresh. Review a fresh plan.",
           );
       }
+      if (
+        authorizeMutation &&
+        !tokens.scope
+          ?.split(" ")
+          .includes("https://www.googleapis.com/auth/gmail.modify")
+      )
+        throw new ApiError(
+          403,
+          "Google mailbox change permission is unavailable. Allow changes again in Settings.",
+        );
       await currentConnection();
       await readOptions.readGuard?.();
       return tokens.access_token;
@@ -181,19 +199,41 @@ export function metadata(m: GmailMessage): MessageMetadata {
 }
 export async function gmailRoute(req: Request, path: string, t: Tenant) {
   const db = binding();
-  if (path === "oauth/start" && req.method === "GET") {
+  if (
+    (path === "oauth/start" && req.method === "GET") ||
+    (path === "oauth/upgrade" && req.method === "POST")
+  ) {
+    const scope = path === "oauth/upgrade" ? "modify" : "readonly";
+    let accountEmail: string | null = null;
+    let accountGeneration: string | null = null;
+    if (scope === "modify") {
+      z.object({ approved: z.literal(true) })
+        .strict()
+        .parse(await req.json());
+      const connection = await db
+        .prepare("SELECT email,generation FROM credentials WHERE tenant=?")
+        .bind(t.id)
+        .first<{ email: string; generation: string }>();
+      if (!connection)
+        throw new ApiError(
+          409,
+          "Connect Gmail read-only before allowing changes.",
+        );
+      accountEmail = connection.email;
+      accountGeneration = connection.generation;
+    }
     const c = oauthConfig(req),
       transaction = await createOAuthTransaction();
     const intent = await db
       .prepare(
-        "UPDATE tenants SET connection_epoch=connection_epoch+1 WHERE id=? AND deleted=0 RETURNING connection_epoch",
+        "UPDATE tenants SET connection_epoch=connection_epoch+1 WHERE id=? AND deleted=0 AND (?='readonly' OR EXISTS(SELECT 1 FROM credentials WHERE tenant=tenants.id AND email=? AND generation=?)) RETURNING connection_epoch",
       )
-      .bind(t.id)
+      .bind(t.id, scope, accountEmail, accountGeneration)
       .first<{ connection_epoch: number }>();
     if (!intent) throw new ApiError(409, "Gmail connection unavailable.");
     const started = await db
       .prepare(
-        "INSERT INTO oauth_transactions(state,tenant,verifier,expires,epoch) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM tenants WHERE id=? AND deleted=0 AND connection_epoch=?)",
+        "INSERT INTO oauth_transactions(state,tenant,verifier,expires,epoch,requested_scope,account_email) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM tenants WHERE id=? AND deleted=0 AND connection_epoch=?)",
       )
       .bind(
         transaction.state,
@@ -201,6 +241,8 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         transaction.verifier,
         transaction.expiresAt,
         intent.connection_epoch,
+        scope,
+        accountEmail,
         t.id,
         intent.connection_epoch,
       )
@@ -210,27 +252,42 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         409,
         "Gmail connection was cancelled. Please start again.",
       );
-    return Response.redirect(
-      buildGoogleAuthorizationUrl({ ...c, transaction, scope: "modify" }),
-      302,
-    );
+    const authorizationUrl = buildGoogleAuthorizationUrl({
+      ...c,
+      transaction,
+      scope,
+    });
+    return scope === "modify"
+      ? json({ authorizationUrl })
+      : Response.redirect(authorizationUrl, 302);
   }
   if (path === "oauth/callback" && req.method === "GET") {
     const url = new URL(req.url),
       returnedState = url.searchParams.get("state") ?? "",
       code = url.searchParams.get("code") ?? "";
+    const transaction = await db
+      .prepare(
+        "DELETE FROM oauth_transactions WHERE state=? AND tenant=? AND expires>? RETURNING verifier,expires,epoch,requested_scope,account_email",
+      )
+      .bind(returnedState, t.id, Date.now())
+      .first<{
+        verifier: string;
+        expires: number;
+        epoch: number;
+        requested_scope: string;
+        account_email: string | null;
+      }>();
+    if (!transaction)
+      throw new ApiError(
+        400,
+        "The Gmail connection expired. Please start again.",
+      );
     if (url.searchParams.has("error"))
       return Response.redirect(
         `${url.origin}/?view=settings&gmail=declined`,
         302,
       );
-    const transaction = await db
-      .prepare(
-        "DELETE FROM oauth_transactions WHERE state=? AND tenant=? AND expires>? RETURNING verifier,expires,epoch",
-      )
-      .bind(returnedState, t.id, Date.now())
-      .first<{ verifier: string; expires: number; epoch: number }>();
-    if (!transaction || !code)
+    if (!code)
       throw new ApiError(
         400,
         "The Gmail connection expired. Please start again.",
@@ -247,14 +304,33 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         expiresAt: transaction.expires,
       },
     });
+    const granted = tokens.scope?.split(" ") ?? [];
+    const modify = granted.includes(
+      "https://www.googleapis.com/auth/gmail.modify",
+    );
     if (
-      !tokens.scope
-        ?.split(" ")
-        .includes("https://www.googleapis.com/auth/gmail.modify")
+      !["readonly", "modify"].includes(transaction.requested_scope) ||
+      (transaction.requested_scope === "modify"
+        ? !modify
+        : !(
+            modify ||
+            granted.includes("https://www.googleapis.com/auth/gmail.readonly")
+          ))
     )
-      throw new ApiError(403, "The required Gmail permission was not granted.");
+      throw new ApiError(
+        403,
+        "The requested Gmail permission was not granted.",
+      );
     const gmail = new GmailClient({ accessToken: tokens.access_token });
     const profile = await gmail.getProfile();
+    if (
+      transaction.requested_scope === "modify" &&
+      profile.emailAddress !== transaction.account_email
+    )
+      throw new ApiError(
+        409,
+        "Permission upgrade must use the connected Gmail account.",
+      );
     const existing = await db
       .prepare("SELECT encrypted,email FROM credentials WHERE tenant=?")
       .bind(t.id)
@@ -270,7 +346,7 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         "Google did not return offline access. Revoke this app in your Google account and reconnect.",
       );
     const connectionFence =
-      "EXISTS(SELECT 1 FROM tenants WHERE id=? AND deleted=0 AND connection_epoch=?)";
+      "EXISTS(SELECT 1 FROM tenants WHERE id=? AND deleted=0 AND connection_epoch=?) AND (?='readonly' OR EXISTS(SELECT 1 FROM credentials WHERE tenant=? AND email=?))";
     const committed = await db.batch([
       ...(existing?.email !== profile.emailAddress
         ? [
@@ -286,17 +362,31 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
               .prepare(
                 `DELETE FROM ${table} WHERE tenant=? ${["messages", "sync_seen", "sync_pages"].includes(table) ? "" : "AND source='gmail'"} AND ${connectionFence}`,
               )
-              .bind(t.id, t.id, transaction.epoch),
+              .bind(
+                t.id,
+                t.id,
+                transaction.epoch,
+                transaction.requested_scope,
+                t.id,
+                transaction.account_email,
+              ),
           )
         : []),
       db
         .prepare(
           `UPDATE sync_schedules SET enabled=0,status='paused',owner=NULL,lease=0 WHERE tenant=? AND ${connectionFence}`,
         )
-        .bind(t.id, t.id, transaction.epoch),
+        .bind(
+          t.id,
+          t.id,
+          transaction.epoch,
+          transaction.requested_scope,
+          t.id,
+          transaction.account_email,
+        ),
       db
         .prepare(
-          `INSERT INTO credentials(tenant,encrypted,email,updated,generation) SELECT ?,?,?,?,? WHERE ${connectionFence} ON CONFLICT(tenant) DO UPDATE SET encrypted=excluded.encrypted,email=excluded.email,updated=excluded.updated,generation=excluded.generation`,
+          `INSERT INTO credentials(tenant,encrypted,email,updated,generation,permission) SELECT ?,?,?,?,?,? WHERE ${connectionFence} ON CONFLICT(tenant) DO UPDATE SET encrypted=excluded.encrypted,email=excluded.email,updated=excluded.updated,generation=excluded.generation,permission=excluded.permission`,
         )
         .bind(
           t.id,
@@ -304,14 +394,24 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
           profile.emailAddress,
           Date.now(),
           crypto.randomUUID(),
+          transaction.requested_scope,
           t.id,
           transaction.epoch,
+          transaction.requested_scope,
+          t.id,
+          transaction.account_email,
         ),
       db
         .prepare(
-          "UPDATE tenants SET settings=json_set(settings,'$.source','gmail') WHERE id=? AND deleted=0 AND connection_epoch=?",
+          "UPDATE tenants SET settings=json_set(settings,'$.source','gmail') WHERE id=? AND deleted=0 AND connection_epoch=? AND (?='readonly' OR EXISTS(SELECT 1 FROM credentials WHERE tenant=? AND email=?))",
         )
-        .bind(t.id, transaction.epoch),
+        .bind(
+          t.id,
+          transaction.epoch,
+          transaction.requested_scope,
+          t.id,
+          transaction.account_email,
+        ),
     ]);
     if (!committed.at(-1)?.meta.changes)
       throw new ApiError(
@@ -517,7 +617,7 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
       );
       const dispatch = await db
         .prepare(
-          "UPDATE actions SET status='attempting',data=? WHERE id=? AND tenant=? AND owner=? AND status='pending' AND lease>? AND EXISTS(SELECT 1 FROM credentials WHERE tenant=actions.tenant AND email=? AND generation=?) AND EXISTS(SELECT 1 FROM tenants WHERE id=actions.tenant AND deleted=0) AND EXISTS(SELECT 1 FROM plans WHERE id=actions.plan_id AND tenant=actions.tenant AND owner=? AND status='executing' AND lease>? AND expires>?)",
+          "UPDATE actions SET status='attempting',data=? WHERE id=? AND tenant=? AND owner=? AND status='pending' AND lease>? AND EXISTS(SELECT 1 FROM credentials WHERE tenant=actions.tenant AND email=? AND generation=? AND permission='modify') AND EXISTS(SELECT 1 FROM tenants WHERE id=actions.tenant AND deleted=0) AND EXISTS(SELECT 1 FROM plans WHERE id=actions.plan_id AND tenant=actions.tenant AND owner=? AND status='executing' AND lease>? AND expires>?)",
         )
         .bind(
           JSON.stringify({

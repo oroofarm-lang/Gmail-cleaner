@@ -71,7 +71,7 @@ type State = {
     theme: string;
     notifications: boolean;
   };
-  connection: { email: string } | null;
+  connection: { email: string; permission?: string } | null;
   job: { processed: number; status: string } | null;
   syncSchedule: {
     enabled: number;
@@ -1626,7 +1626,9 @@ export default function App() {
                         }
                         className="button secondary"
                       >
-                        {data.connection ? "Reconnect Gmail" : "Connect Gmail"}
+                        {data.connection
+                          ? "Reconnect read-only"
+                          : "Connect Gmail read-only"}
                         <ExternalLink size={16} />
                       </button>
                     ) : (
@@ -1635,6 +1637,25 @@ export default function App() {
                         and server encryption key. Demo Mode is available now.
                       </p>
                     )}
+                    {data.connection && (
+                      <p>
+                        App access:{" "}
+                        {data.connection.permission === "modify"
+                          ? "mailbox changes allowed; every cleanup still requires a plan approval"
+                          : "read-only scans and previews"}
+                        .
+                      </p>
+                    )}
+                    {data.connection &&
+                      data.connection.permission !== "modify" &&
+                      data.capabilities.gmailOAuth && (
+                        <button
+                          className="button secondary"
+                          onClick={() => setConfirm("gmail-permission")}
+                        >
+                          Allow mailbox changes <ExternalLink size={16} />
+                        </button>
+                      )}
                     {data.connection && (
                       <button
                         className="text-button danger"
@@ -1952,18 +1973,22 @@ export default function App() {
           <h2 id="confirm-title">
             {confirm.startsWith("unsubscribe:")
               ? "Leave this list?"
-              : confirm === "disconnect"
-                ? "Disconnect Gmail?"
-                : "Delete stored data?"}
+              : confirm === "gmail-permission"
+                ? "Allow Gmail mailbox changes?"
+                : confirm === "disconnect"
+                  ? "Disconnect Gmail?"
+                  : "Delete stored data?"}
           </h2>
           <p>
             {confirm.startsWith("unsubscribe:")
               ? demoMode
                 ? "This simulates unsubscribe for this list. No real request is sent. Its old messages stay until you review a cleanup."
                 : "A safe one-click transport is not configured. Use the sender’s unsubscribe option in Gmail."
-              : confirm === "disconnect"
-                ? "Google access will be revoked. Your Gmail messages stay. Stored analysis remains until you delete it."
-                : "This removes your app analysis, rules and activity. It never deletes Gmail messages. Disconnect Gmail first. Account deletion prevents reuse until an explicit new signup."}
+              : confirm === "gmail-permission"
+                ? "Continue to Google to allow reversible mailbox changes for the connected account. This does not approve cleanup. Every plan still needs your approval, and the app never permanently deletes messages. Google’s permission also includes broader capabilities; this app does not send mail."
+                : confirm === "disconnect"
+                  ? "Google access will be revoked. Your Gmail messages stay. Stored analysis remains until you delete it."
+                  : "This removes your app analysis, rules and activity. It never deletes Gmail messages. Disconnect Gmail first. Account deletion prevents reuse until an explicit new signup."}
           </p>
           {confirm.startsWith("unsubscribe:") &&
             !demoMode &&
@@ -2027,6 +2052,27 @@ export default function App() {
                 (confirm.startsWith("delete") && confirmText !== "DELETE")
               }
               onClick={async () => {
+                if (confirm === "gmail-permission") {
+                  setBusy("confirm");
+                  try {
+                    const result = await api("oauth/upgrade", {
+                      approved: true,
+                    });
+                    if (typeof result.authorizationUrl !== "string")
+                      throw new Error("Google authorization is unavailable.");
+                    const destination = new URL(result.authorizationUrl);
+                    if (destination.origin !== "https://accounts.google.com")
+                      throw new Error(
+                        "Google authorization destination unavailable.",
+                      );
+                    window.location.assign(destination.href);
+                  } catch (e) {
+                    setError((e as Error).message);
+                  } finally {
+                    setBusy("");
+                  }
+                  return;
+                }
                 if (confirm.startsWith("unsubscribe:") && !demoMode) {
                   setBusy("manual-unsubscribe");
                   try {
@@ -2076,9 +2122,11 @@ export default function App() {
                 ? demoMode
                   ? "Confirm unsubscribe"
                   : "Review manual options"
-                : confirm === "disconnect"
-                  ? "Disconnect"
-                  : "Delete app data"}
+                : confirm === "gmail-permission"
+                  ? "Continue to Google"
+                  : confirm === "disconnect"
+                    ? "Disconnect"
+                    : "Delete app data"}
             </button>
           </div>
         </dialog>
