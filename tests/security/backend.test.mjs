@@ -218,6 +218,8 @@ async function harness() {
     "@/lib/server": "lib/server.ts",
     "./server": "lib/server.ts",
     "./gmail-sync": "lib/gmail-sync.ts",
+    "./gmail-server": "lib/gmail-server.ts",
+    "@/lib/gmail-scheduler": "lib/gmail-scheduler.ts",
     "./demo": "lib/demo.ts",
     "@/lib/demo": "lib/demo.ts",
     "@/packages/core": "packages/core/index.ts",

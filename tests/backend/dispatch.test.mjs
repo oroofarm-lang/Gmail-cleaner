@@ -123,6 +123,8 @@ CREATE TABLE oauth_transactions(state TEXT PRIMARY KEY,tenant TEXT NOT NULL,veri
 CREATE TABLE jobs(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,cursor TEXT,processed INTEGER NOT NULL,status TEXT NOT NULL,history_id TEXT,updated INTEGER NOT NULL,lease INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE messages(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,gmail_id TEXT NOT NULL,metadata TEXT NOT NULL,classification TEXT NOT NULL,updated INTEGER NOT NULL);`;
 beforeEach(() => {
+  delete globalThis.__backend.env.GMAIL_SYNC_SCHEDULER;
+  delete globalThis.__backend.env.GOOGLE_REDIRECT_URI;
   globalThis.__backend.beforeQuery = null;
   globalThis.__backend.beforeRun = null;
   globalThis.__backend.decryptHook = null;
@@ -694,7 +696,8 @@ async function syncFixture() {
       });
     if (parsed.pathname.endsWith("/messages")) {
       control.lists.push(parsed.searchParams);
-      return Response.json(await control.list(parsed.searchParams));
+      const response = await control.list(parsed.searchParams);
+      return response instanceof Response ? response : Response.json(response);
     }
     if (parsed.pathname.endsWith("/history")) {
       control.histories.push(parsed.searchParams);
@@ -917,4 +920,277 @@ test("actual sync: persistent cycle detection catches a token older than the32-t
     sqlite.prepare("SELECT status FROM jobs").get().status,
     "interrupted",
   );
+});
+
+const { runGmailScheduler } = await import(
+  pathToFileURL(path.join(root, "lib/gmail-scheduler.ts")).href
+);
+async function schedulerFixture() {
+  const fixture = await syncFixture();
+  Object.assign(globalThis.__backend.env, {
+    GMAIL_SYNC_SCHEDULER: "enabled",
+    GOOGLE_REDIRECT_URI: "https://app.example/api/oauth/callback",
+  });
+  await runGmailScheduler();
+  const consent = await request("gmail/schedule", {
+    enabled: true,
+    intervalMinutes: 15,
+  });
+  assert.equal(consent.status, 200);
+  return fixture;
+}
+function makeScheduleDue() {
+  sqlite.prepare("UPDATE sync_schedules SET next_due=0 WHERE tenant='A'").run();
+}
+test("scheduler: requires explicit consent and current worker readiness", async () => {
+  const { control } = await syncFixture();
+  assert.equal(
+    (await request("gmail/schedule", { enabled: true })).status,
+    409,
+  );
+  Object.assign(globalThis.__backend.env, {
+    GMAIL_SYNC_SCHEDULER: "enabled",
+    GOOGLE_REDIRECT_URI: "https://app.example/api/oauth/callback",
+  });
+  assert.equal(
+    (await request("gmail/schedule", { enabled: true })).status,
+    409,
+  );
+  assert.equal((await runGmailScheduler()).claimed, 0);
+  assert.equal(control.lists.length, 0);
+  assert.equal(
+    (await request("gmail/schedule", { enabled: true, intervalMinutes: 14 }))
+      .status,
+    400,
+  );
+  assert.equal(
+    (await request("gmail/schedule", { enabled: true, intervalMinutes: 15 }))
+      .status,
+    200,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT enabled FROM sync_schedules").get().enabled,
+    1,
+  );
+});
+test("scheduler: bounded full/history units run only reads and respect cadence", async () => {
+  const { control } = await schedulerFixture();
+  assert.equal((await runGmailScheduler()).completed, 1);
+  assert.equal(control.lists[0].get("maxResults"), "5");
+  assert.equal((await runGmailScheduler()).claimed, 0);
+  makeScheduleDue();
+  assert.equal((await runGmailScheduler()).completed, 1);
+  const schedule = sqlite.prepare("SELECT * FROM sync_schedules").get();
+  assert.equal(schedule.status, "waiting");
+  assert.ok(schedule.last_success);
+  assert.ok(schedule.next_due > Date.now() + 14 * 60000);
+  assert.equal(control.histories.length, 1);
+});
+test("scheduler: overlapping ticks acquire one tenant lease", async () => {
+  const { control } = await schedulerFixture();
+  const g = gate();
+  control.list = async () => {
+    g.arrive();
+    await g.wait;
+    return { messages: [{ id: "m1" }] };
+  };
+  const first = runGmailScheduler();
+  await g.entered;
+  assert.equal((await runGmailScheduler()).claimed, 0);
+  g.release();
+  assert.equal((await first).completed, 1);
+  assert.equal(control.lists.length, 1);
+});
+test("scheduler: pause during read releases owned work and prevents further pages", async () => {
+  const { control } = await schedulerFixture();
+  const g = gate();
+  control.list = async () => {
+    g.arrive();
+    await g.wait;
+    return { messages: [{ id: "m1" }] };
+  };
+  const task = runGmailScheduler();
+  await g.entered;
+  assert.equal(
+    (await request("gmail/schedule", { enabled: false })).status,
+    200,
+  );
+  g.release();
+  await task;
+  assert.equal(
+    sqlite.prepare("SELECT status FROM sync_schedules").get().status,
+    "paused",
+  );
+  assert.equal((await runGmailScheduler()).claimed, 0);
+  assert.equal(sqlite.prepare("SELECT owner FROM jobs").get().owner, null);
+});
+test("scheduler: transient errors back off then suspend after five failures without replay", async () => {
+  const { control } = await schedulerFixture();
+  control.list = async () => {
+    throw new Error("synthetic provider outage");
+  };
+  for (let i = 0; i < 5; i++) {
+    makeScheduleDue();
+    assert.equal((await runGmailScheduler()).failed, 1);
+    assert.equal((await runGmailScheduler()).claimed, 0);
+  }
+  const schedule = sqlite.prepare("SELECT * FROM sync_schedules").get();
+  assert.equal(schedule.enabled, 0);
+  assert.equal(schedule.failures, 5);
+  assert.equal(schedule.status, "paused_after_failures");
+  assert.equal(schedule.last_error, "sync_unavailable");
+});
+test("scheduler: expired owner cannot overwrite successor after resumed read", async () => {
+  const { control } = await schedulerFixture();
+  const g = gate();
+  control.list = async () => {
+    g.arrive();
+    await g.wait;
+    return { messages: [{ id: "m1" }] };
+  };
+  const task = runGmailScheduler();
+  await g.entered;
+  sqlite
+    .prepare(
+      "UPDATE sync_schedules SET owner='successor',lease=?,status='waiting' WHERE tenant='A'",
+    )
+    .run(Date.now() + 120000);
+  g.release();
+  await task;
+  assert.equal(
+    sqlite.prepare("SELECT owner FROM sync_schedules").get().owner,
+    "successor",
+  );
+  assert.equal(
+    sqlite.prepare("SELECT status FROM sync_schedules").get().status,
+    "waiting",
+  );
+});
+test("scheduler: disconnect pauses consent and removes future provider access", async () => {
+  await schedulerFixture();
+  await request("gmail/disconnect", {});
+  assert.equal(
+    sqlite.prepare("SELECT enabled FROM sync_schedules").get().enabled,
+    0,
+  );
+  assert.equal((await runGmailScheduler()).claimed, 0);
+});
+
+test("scheduler: provider401 stops scheduling and exposes only a fixed reauth code", async () => {
+  const { control } = await schedulerFixture();
+  control.list = async () =>
+    Response.json(
+      { error: { message: "synthetic secret-like provider text" } },
+      { status: 401 },
+    );
+  assert.equal((await runGmailScheduler()).failed, 1);
+  const schedule = sqlite.prepare("SELECT * FROM sync_schedules").get();
+  assert.equal(schedule.enabled, 0);
+  assert.equal(schedule.status, "reauth_required");
+  assert.equal(schedule.last_error, "reauth_required");
+  assert.equal((await runGmailScheduler()).claimed, 0);
+});
+test("scheduler: stale runtime heartbeat prevents enabling scans while pause always remains available", async () => {
+  await schedulerFixture();
+  sqlite
+    .prepare("UPDATE scheduler_health SET last_tick=?")
+    .run(Date.now() - 16 * 60000);
+  assert.equal(
+    (await request("gmail/schedule", { enabled: true })).status,
+    409,
+  );
+  assert.equal(
+    (await request("gmail/schedule", { enabled: false })).status,
+    200,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT enabled FROM sync_schedules").get().enabled,
+    0,
+  );
+});
+test("scheduler: user cannot enable or pause another tenant schedule", async () => {
+  await schedulerFixture();
+  await demo("B");
+  assert.equal(
+    (await request("gmail/schedule", { enabled: true }, "B")).status,
+    409,
+  );
+  assert.equal(
+    (await request("gmail/schedule", { enabled: false }, "B")).status,
+    200,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT enabled FROM sync_schedules WHERE tenant='A'").get()
+      .enabled,
+    1,
+  );
+  assert.equal(
+    (await request("gmail/schedule", { enabled: true, tenant: "A" }, "B"))
+      .status,
+    400,
+  );
+});
+
+test("scheduler: quota403 keeps consent and retries through bounded backoff", async () => {
+  const { control } = await schedulerFixture();
+  control.list = async () =>
+    Response.json(
+      {
+        error: {
+          message: "private provider text",
+          errors: [{ reason: "userRateLimitExceeded" }],
+        },
+      },
+      { status: 403 },
+    );
+  const before = Date.now();
+  assert.equal((await runGmailScheduler()).failed, 1);
+  const schedule = sqlite.prepare("SELECT * FROM sync_schedules").get();
+  assert.equal(schedule.enabled, 1);
+  assert.equal(schedule.status, "backoff");
+  assert.equal(schedule.last_error, "sync_unavailable");
+  assert.ok(schedule.next_due >= before + 120000);
+  assert.equal((await runGmailScheduler()).claimed, 0);
+  assert.ok(!JSON.stringify(schedule).includes("private provider text"));
+});
+
+test("scheduler: manual scan contention defers without consuming retry budget", async () => {
+  const { control } = await schedulerFixture();
+  const generation = sqlite
+    .prepare("SELECT generation FROM credentials WHERE tenant='A'")
+    .get().generation;
+  sqlite
+    .prepare(
+      "INSERT INTO jobs(id,tenant,source,status,processed,updated,lease,owner) VALUES('A:gmail:scan','A','gmail','running',0,?,?,?)",
+    )
+    .run(Date.now(), Date.now() + 120000, "manual-owner");
+  sqlite.prepare("UPDATE sync_schedules SET failures=2").run();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await makeScheduleDue();
+    const result = await runGmailScheduler();
+    assert.equal(result.failed, 0);
+    const schedule = sqlite.prepare("SELECT * FROM sync_schedules").get();
+    assert.equal(schedule.enabled, 1);
+    assert.equal(schedule.failures, 2);
+    assert.equal(schedule.status, "waiting");
+    assert.equal(schedule.generation, generation);
+  }
+  assert.equal(control.lists.length, 0);
+  assert.equal(control.histories.length, 0);
+});
+
+test("scheduler: permission403 still suspends and requires reauthentication", async () => {
+  const { control } = await schedulerFixture();
+  control.list = async () =>
+    Response.json(
+      { error: { errors: [{ reason: "insufficientPermissions" }] } },
+      { status: 403 },
+    );
+  assert.equal((await runGmailScheduler()).failed, 1);
+  const row = sqlite
+    .prepare("SELECT enabled,status,last_error FROM sync_schedules")
+    .get();
+  assert.equal(row.enabled, 0);
+  assert.equal(row.status, "reauth_required");
+  assert.equal(row.last_error, "reauth_required");
 });

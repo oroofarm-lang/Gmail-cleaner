@@ -745,11 +745,30 @@ test("privacy export is complete, paginated, tenant scoped and excludes credenti
         "{}",
         Date.now(),
       );
+  sqlite
+    .prepare(
+      "INSERT INTO sync_schedules(tenant,enabled,interval_minutes,generation,owner,lease) VALUES(?,1,15,?,?,?)",
+    )
+    .run("A", "private-generation", "private-owner", 123);
+  sqlite
+    .prepare(
+      "INSERT INTO sync_schedules(tenant,enabled,interval_minutes,generation) VALUES(?,1,60,?)",
+    )
+    .run("B", "other-generation");
   const manifest = await request("export", {});
   assert.equal(manifest.status, 200);
   assert.ok(manifest.data.collections.includes("messages"));
   assert.ok(manifest.data.collections.includes("actions"));
   assert.ok(!JSON.stringify(manifest.data).includes("test-token"));
+  assert.equal(manifest.data.syncSchedule.interval_minutes, 15);
+  assert.equal(manifest.data.syncSchedule.enabled, 1);
+  for (const internal of [
+    "private-generation",
+    "private-owner",
+    "other-generation",
+  ])
+    assert.ok(!JSON.stringify(manifest.data).includes(internal));
+  assert.ok(!("lease" in manifest.data.syncSchedule));
   const first = await request("export", { collection: "messages" });
   assert.equal(first.data.rows.length, 200);
   assert.ok(first.data.nextCursor);

@@ -16,6 +16,9 @@ const managedLinux = readExecutionProfile() === "managed-linux";
 
 const localBindingConfig = {
   main: "./build/sites-worker.ts",
+  ...(process.env.INBOX_BUILD_SYNC_CRON === "true"
+    ? { triggers: { crons: ["* * * * *"] } }
+    : {}),
   compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [

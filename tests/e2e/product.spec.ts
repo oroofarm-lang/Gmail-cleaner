@@ -353,3 +353,63 @@ test("synthetic live scan pauses after one page and can resume", async ({
   expect(calls).toBe(2);
   await page.unrouteAll({ behavior: "wait" });
 });
+
+test("synthetic scheduled-scan consent and pause keep cleanup approval explicit", async ({
+  page,
+}) => {
+  const response = await page.request.get("/api/state");
+  const fixture = await response.json();
+  fixture.settings.source = "gmail";
+  fixture.connection = { email: "synthetic-mailbox@example.com" };
+  fixture.capabilities.scheduledSync = true;
+  fixture.syncSchedule = null;
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  const choices: { enabled: boolean; intervalMinutes: number }[] = [];
+  await page.route("**/api/gmail/schedule", async (route) => {
+    const body = route.request().postDataJSON();
+    choices.push(body);
+    fixture.syncSchedule = {
+      enabled: Number(body.enabled),
+      interval_minutes: body.intervalMinutes,
+      status: body.enabled ? "waiting" : "paused",
+      next_due: Date.now(),
+      last_success: null,
+      last_error: null,
+      failures: 0,
+    };
+    await route.fulfill({
+      json: { enabled: body.enabled, intervalMinutes: body.intervalMinutes },
+    });
+  });
+  await page.goto("/?view=guardian");
+  await expect(
+    page.getByText("Every mailbox change still needs your approval.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await page.getByLabel("Scan frequency").selectOption("15");
+  await page
+    .getByRole("button", { name: "Enable read-only scans", exact: true })
+    .click();
+  await expect(
+    page.getByText("Read-only scheduled scans enabled", { exact: true }),
+  ).toBeVisible();
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await page
+    .getByRole("button", { name: "Pause scheduled scans", exact: true })
+    .click();
+  await expect(
+    page.getByText("Scheduled scans are off", { exact: true }),
+  ).toBeVisible();
+  expect(choices).toEqual([
+    { enabled: true, intervalMinutes: 15 },
+    { enabled: false, intervalMinutes: 15 },
+  ]);
+  await page.unrouteAll({ behavior: "wait" });
+});

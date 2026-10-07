@@ -129,3 +129,26 @@ export const syncPages = sqliteTable("sync_pages", {
   id: text("id").primaryKey(),
   tenant: text("tenant").notNull(),
 });
+
+export const syncSchedules = sqliteTable(
+  "sync_schedules",
+  {
+    tenant: text("tenant").primaryKey(),
+    enabled: integer("enabled").notNull().default(0),
+    intervalMinutes: integer("interval_minutes").notNull().default(60),
+    nextDue: integer("next_due").notNull().default(0),
+    status: text("status").notNull().default("off"),
+    generation: text("generation").notNull(),
+    owner: text("owner"),
+    lease: integer("lease").notNull().default(0),
+    failures: integer("failures").notNull().default(0),
+    lastSuccess: integer("last_success"),
+    lastError: text("last_error"),
+  },
+  (t) => [index("sync_schedules_due").on(t.enabled, t.nextDue, t.lease)],
+);
+export const schedulerHealth = sqliteTable("scheduler_health", {
+  id: text("id").primaryKey(),
+  lastTick: integer("last_tick").notNull(),
+  lastCompleted: integer("last_completed"),
+});

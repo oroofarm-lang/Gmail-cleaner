@@ -125,7 +125,7 @@ export async function record(
 export async function state(t: Awaited<ReturnType<typeof tenant>>) {
   const db = binding(),
     source = t.settings.source;
-  const [g, a, r, j, c] = await Promise.all([
+  const [g, a, r, j, c, schedule, health] = await Promise.all([
     db
       .prepare(
         "SELECT * FROM mail_groups WHERE tenant=? AND source=? ORDER BY count DESC LIMIT 100",
@@ -154,6 +154,15 @@ export async function state(t: Awaited<ReturnType<typeof tenant>>) {
       .prepare("SELECT email,updated FROM credentials WHERE tenant=?")
       .bind(t.id)
       .first(),
+    db
+      .prepare(
+        "SELECT enabled,interval_minutes,next_due,status,last_success,last_error,failures FROM sync_schedules WHERE tenant=?",
+      )
+      .bind(t.id)
+      .first(),
+    db
+      .prepare("SELECT last_tick FROM scheduler_health WHERE id='gmail-sync'")
+      .first<{ last_tick: number }>(),
   ]);
   const stats = await db
     .prepare(
@@ -174,6 +183,7 @@ export async function state(t: Awaited<ReturnType<typeof tenant>>) {
     })),
     job: j,
     connection: c,
+    syncSchedule: schedule,
     settings: t.settings,
     user: { email: t.email },
     capabilities: {
@@ -183,6 +193,15 @@ export async function state(t: Awaited<ReturnType<typeof tenant>>) {
         config("TOKEN_ENCRYPTION_KEY")
       ),
       ai: !!(config("OPENAI_API_KEY") && config("OPENAI_MODEL")),
+      scheduledSync:
+        config("GMAIL_SYNC_SCHEDULER") === "enabled" &&
+        !!config("GOOGLE_CLIENT_ID") &&
+        !!config("GOOGLE_CLIENT_SECRET") &&
+        !!config("TOKEN_ENCRYPTION_KEY") &&
+        /^https:\/\/[^@]+$/.test(config("GOOGLE_REDIRECT_URI") ?? "") &&
+        !!health &&
+        health.last_tick <= Date.now() &&
+        Date.now() - health.last_tick < 15 * 60000,
       guardian: false,
       extensionPairing: false,
     },

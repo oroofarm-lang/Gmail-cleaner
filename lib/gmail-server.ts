@@ -70,6 +70,7 @@ export async function clientFor(
   req: Request,
   authorizeMutation?: (account: GmailAccount) => Promise<number>,
   expectedAccount?: GmailAccount,
+  readOptions: { readGuard?: () => Promise<void>; maxRetries?: number } = {},
 ) {
   const c = oauthConfig(req),
     db = binding();
@@ -86,10 +87,12 @@ export async function clientFor(
     throw new ApiError(409, "Gmail account changed.");
   const pinnedEmail = initial.email;
   return new GmailClient({
+    maxRetries: readOptions.maxRetries,
     authorizeMutation: authorizeMutation
       ? () => authorizeMutation(initial)
       : undefined,
     accessToken: async () => {
+      await readOptions.readGuard?.();
       const row = await db
         .prepare(
           "SELECT encrypted,updated,email,generation FROM credentials WHERE tenant=?",
@@ -156,6 +159,7 @@ export async function clientFor(
           );
       }
       await currentConnection();
+      await readOptions.readGuard?.();
       return tokens.access_token;
     },
   });
@@ -287,6 +291,11 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         : []),
       db
         .prepare(
+          `UPDATE sync_schedules SET enabled=0,status='paused',owner=NULL,lease=0 WHERE tenant=? AND ${connectionFence}`,
+        )
+        .bind(t.id, t.id, transaction.epoch),
+      db
+        .prepare(
           `INSERT INTO credentials(tenant,encrypted,email,updated,generation) SELECT ?,?,?,?,? WHERE ${connectionFence} ON CONFLICT(tenant) DO UPDATE SET encrypted=excluded.encrypted,email=excluded.email,updated=excluded.updated,generation=excluded.generation`,
         )
         .bind(
@@ -327,6 +336,11 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
       db
         .prepare(
           "UPDATE tenants SET connection_epoch=connection_epoch+1 WHERE id=?",
+        )
+        .bind(t.id),
+      db
+        .prepare(
+          "UPDATE sync_schedules SET enabled=0,status='paused',owner=NULL,lease=0 WHERE tenant=?",
         )
         .bind(t.id),
       db.prepare("DELETE FROM credentials WHERE tenant=?").bind(t.id),
@@ -857,7 +871,7 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
   }
   throw new ApiError(404, "Gmail action unavailable.");
 }
-async function refreshGroups(t: Tenant) {
+export async function refreshGroups(t: Tenant) {
   const db = binding();
   await db.batch([
     db

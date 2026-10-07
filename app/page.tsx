@@ -73,11 +73,21 @@ type State = {
   };
   connection: { email: string } | null;
   job: { processed: number; status: string } | null;
+  syncSchedule: {
+    enabled: number;
+    interval_minutes: number;
+    next_due: number;
+    status: string;
+    last_success: number | null;
+    last_error: string | null;
+    failures: number;
+  } | null;
   user: { email: string };
   capabilities: {
     gmailOAuth: boolean;
     ai: boolean;
     guardian: boolean;
+    scheduledSync: boolean;
     extensionPairing: boolean;
   };
 };
@@ -211,6 +221,7 @@ export default function App() {
     [menu, setMenu] = useState(false),
     [confirm, setConfirm] = useState(""),
     [confirmText, setConfirmText] = useState("");
+  const [syncInterval, setSyncInterval] = useState(60);
   const scanPaused = useRef(false);
   useEffect(
     () => () => {
@@ -1378,14 +1389,92 @@ export default function App() {
                     one message at a time.
                   </h2>
                   <p>
-                    Your approved rules are ready. Continuous Gmail monitoring
-                    requires a verified Pub/Sub connection and a scheduled
-                    worker.
+                    Scheduled scans keep your report up to date. They read
+                    metadata and never run cleanup rules. Every mailbox change
+                    still needs your approval.
                   </p>
                   <div className="guardian-status">
                     <span className="status-dot" />
-                    Monitoring is not running
+                    {data.syncSchedule?.enabled
+                      ? data.capabilities.scheduledSync
+                        ? "Read-only scheduled scans enabled"
+                        : "Scheduled scans enabled · worker heartbeat is overdue"
+                      : "Scheduled scans are off"}
                   </div>
+                  {!demoMode && (
+                    <div className="info-panel">
+                      <h3>Background scans</h3>
+                      <p>
+                        {data.capabilities.scheduledSync
+                          ? "Choose how often to refresh your inventory. Large scans continue in small pages."
+                          : "Background scans are unavailable until the operator configures and verifies the worker. You can scan manually."}
+                      </p>
+                      {data.syncSchedule?.status === "reauth_required" && (
+                        <p role="status">
+                          Reconnect Gmail, then enable scans again.
+                        </p>
+                      )}
+                      {data.syncSchedule?.status ===
+                        "paused_after_failures" && (
+                        <p role="status">
+                          Scans paused after repeated failures. Try a manual
+                          scan before enabling them again.
+                        </p>
+                      )}
+                      {data.syncSchedule?.status === "backoff" && (
+                        <p role="status">
+                          The last scan could not finish. A retry is scheduled.
+                        </p>
+                      )}
+                      <label htmlFor="sync-interval">Scan frequency</label>
+                      <select
+                        id="sync-interval"
+                        value={syncInterval}
+                        disabled={!!busy || !data.capabilities.scheduledSync}
+                        onChange={(event) =>
+                          setSyncInterval(Number(event.target.value))
+                        }
+                      >
+                        <option value={15}>Every 15 minutes</option>
+                        <option value={60}>Every hour</option>
+                        <option value={360}>Every 6 hours</option>
+                        <option value={1440}>Daily</option>
+                      </select>
+                      <button
+                        className="button secondary"
+                        disabled={
+                          !!busy ||
+                          (!data.syncSchedule?.enabled &&
+                            !data.capabilities.scheduledSync)
+                        }
+                        onClick={() =>
+                          void act(
+                            "schedule",
+                            "gmail/schedule",
+                            {
+                              enabled: !data.syncSchedule?.enabled,
+                              intervalMinutes: syncInterval,
+                            },
+                            data.syncSchedule?.enabled
+                              ? "Scheduled scans paused. A current read may finish; no cleanup will run."
+                              : "Read-only scheduled scans enabled. Cleanup still requires your approval.",
+                          )
+                        }
+                      >
+                        {data.syncSchedule?.enabled
+                          ? "Pause scheduled scans"
+                          : "Enable read-only scans"}
+                      </button>
+                      {data.syncSchedule?.last_success && (
+                        <p className="muted">
+                          Last completed scan:{" "}
+                          {new Date(
+                            data.syncSchedule.last_success,
+                          ).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <button
                     className="button"
                     onClick={() => void scan()}

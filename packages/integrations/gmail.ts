@@ -81,9 +81,11 @@ export type HistoryPage = {
 export class GmailApiError extends Error {
   status: number;
   requiresFullSync: boolean;
-  constructor(status: number) {
+  retryable: boolean;
+  constructor(status: number, retryable = false) {
     super(`Gmail request failed (${status})`);
     this.status = status;
+    this.retryable = retryable;
     this.requiresFullSync = status === 404;
   }
 }
@@ -170,7 +172,11 @@ export class GmailClient {
         attempt >= retries ||
         !(quota || response.status === 429 || response.status >= 500)
       )
-        throw new GmailApiError(response.status);
+        throw new GmailApiError(
+          response.status,
+          method === "GET" &&
+            (quota || response.status === 429 || response.status >= 500),
+        );
       const retryAfter = response.headers.get("retry-after");
       const seconds = retryAfter ? Number(retryAfter) : NaN;
       const dateDelay =

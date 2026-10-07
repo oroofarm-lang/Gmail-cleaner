@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS, type MailGroup } from "@/lib/demo";
 import { compileRule } from "@/packages/core";
 import { interpretCommand, OpenAIClassifier } from "@/packages/integrations";
 import { classify } from "@/packages/core";
+import { configureSyncSchedule } from "@/lib/gmail-scheduler";
 import { gmailRoute } from "@/lib/gmail-server";
 const idSchema = z.string().min(1).max(300);
 async function handle(req: Request) {
@@ -30,6 +31,18 @@ async function handle(req: Request) {
     if (req.method === "POST") mutationGuard(req);
     const t = await tenant(),
       db = binding();
+    if (path === "gmail/schedule" && req.method === "POST") {
+      const input = z
+        .object({
+          enabled: z.boolean(),
+          intervalMinutes: z.number().int().min(15).max(1440).default(60),
+        })
+        .strict()
+        .parse(await req.json());
+      return json(
+        await configureSyncSchedule(t.id, input.enabled, input.intervalMinutes),
+      );
+    }
     if (path.startsWith("gmail/") || path.startsWith("oauth/"))
       return await gmailRoute(req, path, t);
     if (path === "state" && req.method === "GET") return json(await state(t));
@@ -499,6 +512,12 @@ async function handle(req: Request) {
           version: 1,
           exportedAt: new Date().toISOString(),
           settings: t.settings,
+          syncSchedule: await db
+            .prepare(
+              "SELECT enabled,interval_minutes,next_due,status,last_success,last_error,failures FROM sync_schedules WHERE tenant=?",
+            )
+            .bind(t.id)
+            .first(),
           collections: [
             "mail_groups",
             "messages",
@@ -559,6 +578,7 @@ async function handle(req: Request) {
         "oauth_transactions",
         "sync_seen",
         "sync_pages",
+        "sync_schedules",
       ];
       await db.batch([
         ...tables.map((table) =>

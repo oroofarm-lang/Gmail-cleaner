@@ -33,7 +33,7 @@ Click **Explore a demo**. The server seeds 13 synthetic aggregate groups represe
 
 - Real Gmail and OpenAI require owner-configured credentials and live verification. No real mailbox was used for testing.
 - Unsubscribe destinations cannot be DNS-pinned safely in this runtime; live unsubscribe provides Gmail instructions and screened, explicitly untrusted manual destinations. No URL is fetched automatically.
-- Unattended Autopilot and Guardian require a verified scheduled worker and Pub/Sub integration; UI refuses to enable unsupported execution.
+- Opt-in read-only scheduled scans use native Worker cron events, bounded five-message units, tenant/account-bound leases and finite retry backoff. Host cron activation and real provider scheduling remain unverified; unattended cleanup and push monitoring stay disabled.
 - The extension currently opens authenticated dashboard actions; API pairing and current-sender intelligence are not implemented.
 - Lost Gmail mutation responses yield `uncertain`; explicit Undo inspects current labels, performs only reversible restoration, and verifies the result. Mutations never automatically retry. Interrupted work uses durable owner/120s leases. Activity → Check interrupted actions releases expired work without sending Gmail changes; it preserves uncertainty and requires explicit Undo. Token acquisition is followed by fresh protection and dispatch ownership checks. Deployed provider/D1 recovery remains unverified.
 - Sites/Vinext uses Vinext 1.0.1, a hosting-compatible Next.js implementation. Private deployment is owner-only; public customer ingress/authentication needs verification.

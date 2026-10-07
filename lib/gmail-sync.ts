@@ -17,7 +17,7 @@ type Cursor = {
   seen: string[];
   pending?: { ids: string[]; next?: string; checkpoint: string };
 };
-const PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 25;
 const LEASE_MS = 120000;
 const historyId = (value: unknown): value is string =>
   typeof value === "string" && /^\d{1,128}$/.test(value);
@@ -63,6 +63,11 @@ function isMissing(error: unknown): boolean {
     error.status === 404
   );
 }
+export class GmailScanBusy extends ApiError {
+  constructor() {
+    super(409, "A scan is already processing.");
+  }
+}
 /** One bounded read-only work unit. Cursor and inventory changes commit atomically. */
 export async function syncGmailPage(
   tenantId: string,
@@ -70,7 +75,16 @@ export async function syncGmailPage(
   account: Account,
   project: (message: GmailMessage) => MessageMetadata,
   restart = false,
+  options: { pageSize?: number; guard?: () => Promise<void> } = {},
 ) {
+  const PAGE_SIZE = options.pageSize ?? MAX_PAGE_SIZE;
+  if (
+    !Number.isSafeInteger(PAGE_SIZE) ||
+    PAGE_SIZE < 1 ||
+    PAGE_SIZE > MAX_PAGE_SIZE
+  )
+    throw new ApiError(400, "Invalid sync page size.");
+  await options.guard?.();
   const db = binding(),
     id = `${tenantId}:gmail:scan`,
     owner = crypto.randomUUID();
@@ -94,11 +108,19 @@ export async function syncGmailPage(
       account.generation,
     )
     .first<{ cursor: string | null; history_id: string | null }>();
-  if (!job)
+  if (!job) {
+    const busy = await db
+      .prepare(
+        "SELECT 1 FROM jobs j JOIN credentials c ON c.tenant=j.tenant JOIN tenants t ON t.id=j.tenant WHERE j.id=? AND j.tenant=? AND j.lease>? AND j.status='running' AND c.email=? AND c.generation=? AND t.deleted=0",
+      )
+      .bind(id, tenantId, Date.now(), account.email, account.generation)
+      .first();
+    if (busy) throw new GmailScanBusy();
     throw new ApiError(
       409,
       "A scan is already processing or the account changed.",
     );
+  }
   const fence =
     "EXISTS(SELECT 1 FROM jobs j JOIN credentials c ON c.tenant=j.tenant JOIN tenants t ON t.id=j.tenant WHERE j.id=? AND j.tenant=? AND j.owner=? AND j.lease>? AND j.status='running' AND c.email=? AND c.generation=? AND t.deleted=0)";
   const args = () => [
@@ -110,6 +132,7 @@ export async function syncGmailPage(
     account.generation,
   ];
   const heartbeat = async () => {
+    await options.guard?.();
     const result = await db
       .prepare(`UPDATE jobs SET lease=? WHERE id=? AND tenant=? AND ${fence}`)
       .bind(Date.now() + LEASE_MS, id, tenantId, ...args())
