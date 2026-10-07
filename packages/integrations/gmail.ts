@@ -298,10 +298,14 @@ export class GmailClient {
   listHistory(
     startHistoryId: string,
     pageToken?: string,
+    maxResults = 500,
   ): Promise<HistoryPage> {
     if (!/^\d+$/.test(startHistoryId))
       throw new Error("Invalid Gmail history ID");
-    const params = new URLSearchParams({ startHistoryId, maxResults: "500" });
+    const params = new URLSearchParams({
+      startHistoryId,
+      maxResults: String(Math.min(500, Math.max(1, maxResults))),
+    });
     if (pageToken) params.set("pageToken", pageToken);
     return this.request(`history?${params}`);
   }

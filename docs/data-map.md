@@ -17,3 +17,7 @@ Required flows: browser → gateway → same-origin API → tenant repository �
 ## User export
 
 Authenticated `POST /api/export` returns a manifest with preferences and six allowlisted collections: groups, messages, plans, actions, rules and jobs. Each collection uses tenant-scoped ID keyset pagination (200 rows). The browser completes all pages before downloading `inbox-agent-data.json`. Credentials, OAuth transactions and scan owner tokens are excluded. This is current paged data, not a transactionally consistent backup or restore artifact. Mail metadata/action details remain sensitive and are disclosed only to their owner.
+
+## Synchronization working state
+
+D1 `jobs.cursor` stores the current full/history phase, opaque page cursor, sweep/run IDs and pending changed message IDs. `jobs.history_id` advances only after all IDs for the history traversal have committed. `sync_seen` stores tenant/message/sweep markers to prune vanished local inventory after a complete full sweep. `sync_pages` stores tenant/run/SHA256 token keys to detect provider pagination cycles across many pages. Both internal tables are excluded from user export and contain no OAuth credentials, body text or provider mutation authority. They are cleared at successful sync boundaries and tenant data/account deletion; account replacement clears prior scan state. Timed retention and deployed cleanup evidence remain separate launch gates.

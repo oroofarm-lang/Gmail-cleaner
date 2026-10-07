@@ -672,3 +672,249 @@ test("actual adapter: current OAuth intent connects and rotates generation witho
   assert.equal(settings.source, "gmail");
   assert.deepEqual(settings.protectedSenders, ["preserve@example.com"]);
 });
+
+async function syncFixture() {
+  const fixture = await setupLive();
+  const original = globalThis.fetch;
+  const control = {
+    lists: [],
+    histories: [],
+    profile: "100",
+    list: async () => ({ messages: [{ id: "m1" }] }),
+    history: async () => ({ history: [], historyId: "100" }),
+    messageHook: null,
+  };
+  globalThis.fetch = async (url, options) => {
+    const parsed = new URL(url);
+    assert.equal(options.method, "GET", "sync must issue only GET requests");
+    if (parsed.pathname.endsWith("/profile"))
+      return Response.json({
+        emailAddress: "a@gmail.example",
+        historyId: control.profile,
+      });
+    if (parsed.pathname.endsWith("/messages")) {
+      control.lists.push(parsed.searchParams);
+      return Response.json(await control.list(parsed.searchParams));
+    }
+    if (parsed.pathname.endsWith("/history")) {
+      control.histories.push(parsed.searchParams);
+      const response = await control.history(parsed.searchParams);
+      return response instanceof Response ? response : Response.json(response);
+    }
+    const id = parsed.pathname.split("/messages/")[1];
+    if (id && control.messageHook) await control.messageHook(id);
+    if (id && !fixture.mailbox.has(id))
+      return Response.json({ error: {} }, { status: 404 });
+    return original(url, options);
+  };
+  return { ...fixture, control };
+}
+test("actual sync: full pages prune vanished inventory only at completion, then catch up history", async () => {
+  const { control, mailbox } = await syncFixture();
+  mailbox.set("m2", liveMessage("m2"));
+  control.list = async (params) =>
+    params.get("pageToken") === "opaque"
+      ? { messages: [{ id: "m2" }] }
+      : { messages: [{ id: "m1" }], nextPageToken: "opaque" };
+  sqlite
+    .prepare("UPDATE messages SET gmail_id=?,id=? WHERE tenant=?")
+    .run("old", "A:old", "A");
+  let result = await request("gmail/scan", {});
+  assert.equal(result.status, 200);
+  assert.equal(result.data.complete, false);
+  assert.ok(sqlite.prepare("SELECT id FROM messages WHERE id=?").get("A:old"));
+  result = await request("gmail/scan", {});
+  assert.equal(result.data.complete, false);
+  assert.equal(
+    sqlite.prepare("SELECT id FROM messages WHERE id=?").get("A:old"),
+    undefined,
+  );
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM messages").get().n, 2);
+  assert.equal((await request("gmail/scan", {})).data.complete, true);
+  assert.equal(control.lists[0].get("includeSpamTrash"), "true");
+  assert.equal(control.histories[0].get("startHistoryId"), "100");
+});
+test("actual sync: incremental additions, labels and deletions refresh current metadata without relisting", async () => {
+  const { control, mailbox } = await syncFixture();
+  await request("gmail/scan", {});
+  await request("gmail/scan", {});
+  mailbox.set("m2", liveMessage("m2", { labelIds: ["INBOX", "STARRED"] }));
+  mailbox.delete("m1");
+  control.history = async () => ({
+    history: [
+      {
+        id: "101",
+        messagesAdded: [{ message: { id: "m2" } }],
+        labelsAdded: [{ message: { id: "m2" }, labelIds: ["STARRED"] }],
+        messagesDeleted: [{ message: { id: "m1" } }],
+      },
+    ],
+    historyId: "105",
+  });
+  const result = await request("gmail/scan", {});
+  assert.equal(result.data.complete, true);
+  assert.equal(control.lists.length, 1);
+  assert.equal(
+    sqlite.prepare("SELECT id FROM messages WHERE id=?").get("A:m1"),
+    undefined,
+  );
+  assert.equal(
+    JSON.parse(
+      sqlite
+        .prepare("SELECT classification FROM messages WHERE id=?")
+        .get("A:m2").classification,
+    ).action,
+    "KEEP",
+  );
+  assert.equal(
+    sqlite.prepare("SELECT history_id FROM jobs").get().history_id,
+    "105",
+  );
+});
+test("actual sync: history page over25 IDs resumes without advancing its checkpoint early", async () => {
+  const { control, mailbox } = await syncFixture();
+  await request("gmail/scan", {});
+  await request("gmail/scan", {});
+  const ids = Array.from({ length: 31 }, (_, i) => "new" + i);
+  for (const id of ids) mailbox.set(id, liveMessage(id));
+  control.history = async () => ({
+    history: [
+      { id: "110", messagesAdded: ids.map((id) => ({ message: { id } })) },
+    ],
+    historyId: "111",
+  });
+  const before = control.histories.length;
+  assert.equal((await request("gmail/scan", {})).data.complete, false);
+  assert.equal(
+    sqlite.prepare("SELECT history_id FROM jobs").get().history_id,
+    "100",
+  );
+  assert.equal((await request("gmail/scan", {})).data.complete, true);
+  assert.equal(control.histories.length, before + 1);
+  assert.equal(
+    sqlite.prepare("SELECT history_id FROM jobs").get().history_id,
+    "111",
+  );
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM messages").get().n, 32);
+});
+test("actual sync: expired history resets full scan and retains inventory until completed sweep", async () => {
+  const { control } = await syncFixture();
+  await request("gmail/scan", {});
+  await request("gmail/scan", {});
+  control.profile = "200";
+  control.history = async () => Response.json({ error: {} }, { status: 404 });
+  const result = await request("gmail/scan", {});
+  assert.equal(result.status, 200);
+  assert.equal(result.data.resync, true);
+  assert.equal(result.data.complete, false);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM messages").get().n, 1);
+  assert.equal(
+    sqlite.prepare("SELECT history_id FROM jobs").get().history_id,
+    null,
+  );
+  assert.equal(
+    JSON.parse(sqlite.prepare("SELECT cursor FROM jobs").get().cursor).baseline,
+    "200",
+  );
+});
+test("actual sync: failed metadata fetch commits neither new rows nor cursor", async () => {
+  const { control, mailbox } = await syncFixture();
+  mailbox.set("m2", liveMessage("m2"));
+  control.list = async () => ({ messages: [{ id: "m2" }, { id: "broken" }] });
+  control.messageHook = async (id) => {
+    if (id === "broken") throw new Error("synthetic read failure");
+  };
+  assert.equal((await request("gmail/scan", {})).status, 503);
+  assert.equal(
+    sqlite.prepare("SELECT id FROM messages WHERE id=?").get("A:m2"),
+    undefined,
+  );
+  assert.equal(sqlite.prepare("SELECT cursor FROM jobs").get().cursor, null);
+  control.messageHook = null;
+  assert.equal((await request("gmail/scan", {})).status, 200);
+});
+test("actual sync: repeated history page token fails without checkpoint advancement", async () => {
+  const { control } = await syncFixture();
+  await request("gmail/scan", {});
+  await request("gmail/scan", {});
+  control.history = async () => ({
+    history: [],
+    historyId: "110",
+    nextPageToken: "repeat",
+  });
+  assert.equal((await request("gmail/scan", {})).status, 200);
+  assert.equal((await request("gmail/scan", {})).status, 502);
+  assert.equal(
+    sqlite.prepare("SELECT history_id FROM jobs").get().history_id,
+    "100",
+  );
+});
+
+test("actual sync: explicit restart recovers repeated cursor without deleting current inventory early", async () => {
+  const { control } = await syncFixture();
+  await request("gmail/scan", {});
+  await request("gmail/scan", {});
+  control.history = async () => ({
+    history: [],
+    historyId: "110",
+    nextPageToken: "repeat",
+  });
+  await request("gmail/scan", {});
+  assert.equal((await request("gmail/scan", {})).status, 502);
+  const result = await request("gmail/scan", { restart: true });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.mode, "full");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM messages").get().n, 1);
+  assert.equal(control.lists.length, 2);
+});
+test("actual sync: backwards history checkpoint leaves inventory and cursor unchanged", async () => {
+  const { control } = await syncFixture();
+  await request("gmail/scan", {});
+  await request("gmail/scan", {});
+  control.history = async () => ({ history: [], historyId: "99" });
+  assert.equal((await request("gmail/scan", {})).status, 502);
+  assert.equal(
+    sqlite.prepare("SELECT history_id FROM jobs").get().history_id,
+    "100",
+  );
+});
+
+test("actual sync: more than1000 valid full pages can finish and catch up history", async () => {
+  const { control } = await syncFixture();
+  let pages = 0;
+  control.list = async () => ({
+    messages: [],
+    ...(++pages < 1005 ? { nextPageToken: "page" + pages } : {}),
+  });
+  let complete = false,
+    work = 0;
+  while (!complete && work < 1010) {
+    const result = await request("gmail/scan", {});
+    assert.equal(result.status, 200);
+    complete = result.data.complete;
+    work++;
+  }
+  assert.equal(complete, true);
+  assert.equal(pages, 1005);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM sync_pages").get().n, 0);
+});
+test("actual sync: persistent cycle detection catches a token older than the32-token cursor window", async () => {
+  const { control } = await syncFixture();
+  let pages = 0;
+  control.list = async () => ({
+    messages: [],
+    nextPageToken: ++pages === 50 ? "page1" : "page" + pages,
+  });
+  for (let i = 0; i < 49; i++)
+    assert.equal((await request("gmail/scan", {})).status, 200);
+  assert.equal(
+    JSON.parse(sqlite.prepare("SELECT cursor FROM jobs").get().cursor).seen
+      .length,
+    32,
+  );
+  assert.equal((await request("gmail/scan", {})).status, 502);
+  assert.equal(
+    sqlite.prepare("SELECT status FROM jobs").get().status,
+    "interrupted",
+  );
+});

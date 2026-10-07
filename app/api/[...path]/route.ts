@@ -557,13 +557,17 @@ async function handle(req: Request) {
         "jobs",
         "messages",
         "oauth_transactions",
+        "sync_seen",
+        "sync_pages",
       ];
       await db.batch([
         ...tables.map((table) =>
           db.prepare(`DELETE FROM ${table} WHERE tenant=?`).bind(t.id),
         ),
         db
-          .prepare("UPDATE tenants SET settings=?,deleted=? WHERE id=?")
+          .prepare(
+            "UPDATE tenants SET settings=?,deleted=?,connection_epoch=connection_epoch+1 WHERE id=?",
+          )
           .bind(
             JSON.stringify(DEFAULT_SETTINGS),
             Number(path === "delete-account"),

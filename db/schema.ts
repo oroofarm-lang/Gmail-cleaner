@@ -112,3 +112,20 @@ export const messages = sqliteTable(
   },
   (t) => [index("messages_tenant").on(t.tenant, t.gmailId)],
 );
+
+export const syncSeen = sqliteTable(
+  "sync_seen",
+  {
+    id: text("id").primaryKey(),
+    tenant: text("tenant").notNull(),
+    gmailId: text("gmail_id").notNull(),
+    generation: text("generation").notNull(),
+  },
+  (t) => [
+    index("sync_seen_tenant_message").on(t.tenant, t.gmailId, t.generation),
+  ],
+);
+export const syncPages = sqliteTable("sync_pages", {
+  id: text("id").primaryKey(),
+  tenant: text("tenant").notNull(),
+});

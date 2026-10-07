@@ -217,6 +217,7 @@ async function harness() {
   const files = {
     "@/lib/server": "lib/server.ts",
     "./server": "lib/server.ts",
+    "./gmail-sync": "lib/gmail-sync.ts",
     "./demo": "lib/demo.ts",
     "@/lib/demo": "lib/demo.ts",
     "@/packages/core": "packages/core/index.ts",

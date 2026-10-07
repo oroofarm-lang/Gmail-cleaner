@@ -1,5 +1,11 @@
 "use client";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   ArrowUpRight,
   ArrowRight,
@@ -205,6 +211,13 @@ export default function App() {
     [menu, setMenu] = useState(false),
     [confirm, setConfirm] = useState(""),
     [confirmText, setConfirmText] = useState("");
+  const scanPaused = useRef(false);
+  useEffect(
+    () => () => {
+      scanPaused.current = true;
+    },
+    [],
+  );
   const [manualUnsubscribe, setManualUnsubscribe] = useState<{
     reason: string;
     sender: string;
@@ -284,24 +297,31 @@ export default function App() {
     await act("demo", "demo", {}, "Demo ready. Everything here is synthetic.");
     go("report");
   };
-  const scan = async () => {
+  const scan = async (restart = false) => {
+    scanPaused.current = false;
     if (data?.settings.source === "gmail") {
       setBusy("scan");
       setError("");
       try {
         let complete = false;
-        while (!complete) {
+        let first = true;
+        while (!complete && !scanPaused.current) {
           const r = await api<{ processed: number; complete: boolean }>(
             "gmail/scan",
-            {},
+            first && restart ? { restart: true } : {},
           );
+          first = false;
           setNotice(
             `${fmt(r.processed)} messages inventoried. Your scan can resume if interrupted.`,
           );
           complete = r.complete;
           await load();
         }
-        setNotice("Scan finished. Your report is ready.");
+        setNotice(
+          scanPaused.current
+            ? "Scan paused after the current page. Choose Scan again to resume."
+            : "Scan finished. Your report is ready.",
+        );
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -483,6 +503,22 @@ export default function App() {
           </div>
         </header>
         <main id="main" tabIndex={-1}>
+          {busy === "scan" && data?.settings.source === "gmail" && (
+            <div className="alert" role="status">
+              <span>
+                Reading your inbox. You can pause after the current page.
+              </span>
+              <button
+                className="button small"
+                onClick={() => {
+                  scanPaused.current = true;
+                  setNotice("Pausing after the current page…");
+                }}
+              >
+                Pause scan <Pause size={16} />
+              </button>
+            </div>
+          )}
           {error && (
             <div className="alert error" role="alert">
               <span>{error}</span>
@@ -671,6 +707,15 @@ export default function App() {
                           />
                           {busy === "scan" ? "Scanning…" : "Scan again"}
                         </button>
+                        {!demoMode && data.job?.status === "interrupted" && (
+                          <button
+                            className="text-button"
+                            disabled={!!busy}
+                            onClick={() => void scan(true)}
+                          >
+                            Restart inventory
+                          </button>
+                        )}
                       </div>
                       <div className="hero-foot">
                         {demoMode

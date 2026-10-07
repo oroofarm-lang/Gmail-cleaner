@@ -314,3 +314,42 @@ test("synthetic live-mode accessibility for manual unsubscribe and interrupted r
   expect(writes).toEqual(["manual-options", "reconcile"]);
   await page.unrouteAll({ behavior: "wait" });
 });
+
+test("synthetic live scan pauses after one page and can resume", async ({
+  page,
+}) => {
+  const response = await page.request.get("/api/state");
+  const fixture = await response.json();
+  fixture.settings.source = "gmail";
+  fixture.connection = { email: "synthetic-mailbox@example.com" };
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  await page.route("**/api/gmail/scan", async (route) => {
+    calls++;
+    if (calls === 1) await gate;
+    await route.fulfill({
+      json: { processed: 25 * calls, complete: calls > 1 },
+    });
+  });
+  await page.goto("/?view=report");
+  await expect(
+    page.getByText("GMAIL CONNECTED", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Scan again", exact: true }).click();
+  await page.getByRole("button", { name: "Pause scan", exact: false }).click();
+  release();
+  await expect(
+    page.getByText("Scan paused after the current page.", { exact: false }),
+  ).toBeVisible();
+  expect(calls).toBe(1);
+  await page.getByRole("button", { name: "Scan again", exact: true }).click();
+  await expect(
+    page.getByText("Scan finished. Your report is ready.", { exact: true }),
+  ).toBeVisible();
+  expect(calls).toBe(2);
+  await page.unrouteAll({ behavior: "wait" });
+});

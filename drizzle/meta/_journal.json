@@ -36,6 +36,20 @@
       "when": 1791303387254,
       "tag": "0004_nostalgic_weapon_omega",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791354424692,
+      "tag": "0005_wise_firebird",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791354603729,
+      "tag": "0006_rainy_jack_power",
+      "breakpoints": true
     }
   ]
 }

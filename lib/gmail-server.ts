@@ -16,6 +16,7 @@ import {
 } from "@/packages/integrations";
 import { classify, senderAddress, type MessageMetadata } from "@/packages/core";
 import { z } from "zod";
+import { syncGmailPage } from "./gmail-sync";
 import { assessUnsubscribe } from "@/packages/integrations/unsubscribe";
 type Tenant = Awaited<ReturnType<typeof tenant>>;
 function oauthConfig(req: Request) {
@@ -68,6 +69,7 @@ export async function clientFor(
   t: Tenant,
   req: Request,
   authorizeMutation?: (account: GmailAccount) => Promise<number>,
+  expectedAccount?: GmailAccount,
 ) {
   const c = oauthConfig(req),
     db = binding();
@@ -76,6 +78,12 @@ export async function clientFor(
     .bind(t.id)
     .first<GmailAccount>();
   if (!initial) throw new ApiError(409, "Connect Gmail first.");
+  if (
+    expectedAccount &&
+    (initial.email !== expectedAccount.email ||
+      initial.generation !== expectedAccount.generation)
+  )
+    throw new ApiError(409, "Gmail account changed.");
   const pinnedEmail = initial.email;
   return new GmailClient({
     authorizeMutation: authorizeMutation
@@ -263,6 +271,8 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
       ...(existing?.email !== profile.emailAddress
         ? [
             "messages",
+            "sync_seen",
+            "sync_pages",
             "mail_groups",
             "plans",
             "jobs",
@@ -270,7 +280,7 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
           ].map((table) =>
             db
               .prepare(
-                `DELETE FROM ${table} WHERE tenant=? ${table === "messages" ? "" : "AND source='gmail'"} AND ${connectionFence}`,
+                `DELETE FROM ${table} WHERE tenant=? ${["messages", "sync_seen", "sync_pages"].includes(table) ? "" : "AND source='gmail'"} AND ${connectionFence}`,
               )
               .bind(t.id, t.id, transaction.epoch),
           )
@@ -365,105 +375,25 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
     });
   }
   if (path === "gmail/scan") {
-    const gmail = await clientFor(t, req);
+    const input = z
+      .object({ restart: z.boolean().default(false) })
+      .strict()
+      .parse(body);
     const account = await db
       .prepare("SELECT email,generation FROM credentials WHERE tenant=?")
       .bind(t.id)
       .first<GmailAccount>();
     if (!account) throw new ApiError(409, "Connect Gmail first.");
-    const jobId = `${t.id}:gmail:scan`;
-    const owner = crypto.randomUUID();
-    await db
-      .prepare(
-        "INSERT OR IGNORE INTO jobs(id,tenant,source,cursor,processed,status,updated,lease) VALUES(?,?,'gmail',NULL,0,'running',?,0)",
-      )
-      .bind(jobId, t.id, Date.now())
-      .run();
-    const job = await db
-      .prepare(
-        "UPDATE jobs SET owner=?,lease=?,cursor=CASE WHEN status='complete' THEN NULL ELSE cursor END,status='running' WHERE id=? AND tenant=? AND lease<? RETURNING id,cursor,processed",
-      )
-      .bind(owner, Date.now() + 120000, jobId, t.id, Date.now())
-      .first<{ id: string; cursor: string | null; processed: number }>();
-    if (!job)
-      throw new ApiError(
-        409,
-        "A scan is already processing. Try again shortly.",
-      );
-    const fence =
-      "EXISTS(SELECT 1 FROM jobs j JOIN credentials c ON c.tenant=j.tenant JOIN tenants t ON t.id=j.tenant WHERE j.id=? AND j.tenant=? AND j.owner=? AND j.lease>? AND j.status='running' AND c.email=? AND c.generation=? AND t.deleted=0)";
-    try {
-      const page = await gmail.listMessages({
-        pageToken: job.cursor ?? undefined,
-        maxResults: 25,
-      });
-      const messages: MessageMetadata[] = [];
-      for (const row of page.messages ?? [])
-        messages.push(metadata(await gmail.getSafetyMessage(row.id)));
-      const committed = await db.batch([
-        ...messages.map((m) =>
-          db
-            .prepare(
-              `INSERT INTO messages(id,tenant,gmail_id,metadata,classification,updated) SELECT ?,?,?,?,?,? WHERE ${fence} ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,classification=excluded.classification,updated=excluded.updated`,
-            )
-            .bind(
-              `${t.id}:${m.id}`,
-              t.id,
-              m.id,
-              JSON.stringify(m),
-              JSON.stringify(classify(m, t.settings.protectedSenders)),
-              Date.now(),
-              job.id,
-              t.id,
-              owner,
-              Date.now(),
-              account.email,
-              account.generation,
-            ),
-        ),
-        db
-          .prepare(
-            `UPDATE jobs SET cursor=?,processed=(SELECT COUNT(*) FROM messages WHERE tenant=?),status=?,updated=?,lease=0,owner=NULL WHERE id=? AND tenant=? AND ${fence}`,
-          )
-          .bind(
-            page.nextPageToken ?? null,
-            t.id,
-            page.nextPageToken ? "running" : "complete",
-            Date.now(),
-            job.id,
-            t.id,
-            job.id,
-            t.id,
-            owner,
-            Date.now(),
-            account.email,
-            account.generation,
-          ),
-      ]);
-      if (!committed.at(-1)?.meta.changes)
-        throw new ApiError(
-          409,
-          "Scan ownership or Gmail account changed. Retry a fresh scan.",
-        );
-      const total = await db
-        .prepare("SELECT COUNT(*) n FROM messages WHERE tenant=?")
-        .bind(t.id)
-        .first<{ n: number }>();
-      await refreshGroups(t);
-      return json({
-        processed: total?.n ?? 0,
-        complete: !page.nextPageToken,
-        jobId: job.id,
-      });
-    } catch (e) {
-      await db
-        .prepare(
-          "UPDATE jobs SET status=?,lease=0,owner=NULL WHERE id=? AND tenant=? AND owner=?",
-        )
-        .bind("interrupted", job.id, t.id, owner)
-        .run();
-      throw e;
-    }
+    const gmail = await clientFor(t, req, undefined, account);
+    const result = await syncGmailPage(
+      t.id,
+      gmail,
+      account,
+      metadata,
+      input.restart,
+    );
+    await refreshGroups(t);
+    return json(result);
   }
   if (path === "gmail/preview") {
     const input = z

@@ -323,6 +323,12 @@ async function setupLive() {
   const mailbox = new Map([["m1", liveMessage()]]);
   const calls = [];
   globalThis.__backend.gmail = {
+    async getProfile() {
+      return { emailAddress: "a@gmail.example", historyId: "100" };
+    },
+    async listHistory() {
+      return { historyId: "100", history: [] };
+    },
     async getMessage(id) {
       return structuredClone(mailbox.get(id));
     },
@@ -796,7 +802,9 @@ test("lost Undo response can be safely retried after inspecting current labels",
 
 test("manual unsubscribe returns scoped options without provider calls or automatic success", async () => {
   await setupLive();
-  globalThis.__backend.gmail.listMessages = async () => ({ messages: [] });
+  globalThis.__backend.gmail.listMessages = async () => ({
+    messages: [{ id: "m1" }],
+  });
   await request("gmail/scan", {});
   const group = sqlite
     .prepare("SELECT id FROM mail_groups WHERE tenant='A' AND source='gmail'")
