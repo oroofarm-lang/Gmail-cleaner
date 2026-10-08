@@ -222,6 +222,7 @@ async function harness() {
     "./gmail-sync": "lib/gmail-sync.ts",
     "./gmail-server": "lib/gmail-server.ts",
     "@/lib/ai-consent": "lib/ai-consent.ts",
+    "@/lib/extension-relay": "lib/extension-relay.ts",
     "@/lib/gmail-scheduler": "lib/gmail-scheduler.ts",
     "./demo": "lib/demo.ts",
     "@/lib/demo": "lib/demo.ts",

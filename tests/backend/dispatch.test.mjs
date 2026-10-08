@@ -124,6 +124,9 @@ CREATE TABLE oauth_transactions(state TEXT PRIMARY KEY,tenant TEXT NOT NULL,veri
 CREATE TABLE jobs(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,cursor TEXT,processed INTEGER NOT NULL,status TEXT NOT NULL,history_id TEXT,updated INTEGER NOT NULL,lease INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE messages(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,gmail_id TEXT NOT NULL,metadata TEXT NOT NULL,classification TEXT NOT NULL,updated INTEGER NOT NULL);`;
 beforeEach(() => {
+  delete globalThis.__backend.env.INBOX_EXTENSION_RELAY;
+  delete globalThis.__backend.env.INBOX_EXTENSION_ID;
+  delete globalThis.__backend.env.INBOX_EXTENSION_ORIGIN;
   delete globalThis.__backend.env.GMAIL_SYNC_SCHEDULER;
   delete globalThis.__backend.env.GOOGLE_REDIRECT_URI;
   globalThis.__backend.beforeQuery = null;
@@ -1743,4 +1746,102 @@ test("AI: Gmail reconnect and disconnect invalidate metadata sharing", async () 
     sqlite.prepare("SELECT enabled FROM ai_consents").get().enabled,
     0,
   );
+});
+
+function enableRelay() {
+  globalThis.__backend.env.INBOX_EXTENSION_RELAY = "enabled";
+  globalThis.__backend.env.INBOX_EXTENSION_ID = "a".repeat(32);
+  globalThis.__backend.env.INBOX_EXTENSION_ORIGIN = "https://app.example";
+}
+const relayId = "867a5094-73ba-42ee-a41b-54a0f217ba6b";
+const relayNonce = "1".repeat(64);
+test("companion approval is explicit, single-use, tenant-bound and read-only", async () => {
+  enableRelay();
+  const input = { id: relayId, nonce: relayNonce };
+  assert.equal((await request("extension/start", input)).status, 200);
+  assert.equal((await request("extension/summary", input)).status, 403);
+  assert.equal((await request("extension/approve", input)).status, 400);
+  assert.equal(
+    (await request("extension/approve", { ...input, approved: true }, "B"))
+      .status,
+    409,
+  );
+  assert.equal(
+    (await request("extension/approve", { ...input, approved: true })).status,
+    200,
+  );
+  assert.equal(
+    (await request("extension/approve", { ...input, approved: true })).status,
+    409,
+  );
+  const result = await request("extension/summary", input);
+  assert.equal(result.status, 200);
+  assert.deepEqual(Object.keys(result.data).sort(), [
+    "actions",
+    "connected",
+    "expires",
+    "issued",
+    "protected",
+    "source",
+    "total",
+    "version",
+  ]);
+  assert.equal((await request("extension/summary", input, "B")).status, 403);
+  assert.equal((await request("extension/summary", input, null)).status, 401);
+  assert.equal(
+    (await request("extension/summary", { ...input, action: "trash" })).status,
+    400,
+  );
+  assert.equal(
+    (await request("extension/summary", { ...input, nonce: "2".repeat(64) }))
+      .status,
+    403,
+  );
+  assert.equal(
+    (await request("extension/revoke", { id: relayId }, "B")).status,
+    200,
+  );
+  assert.equal((await request("extension/summary", input)).status, 200);
+  assert.equal(
+    (await request("extension/revoke", { id: relayId })).status,
+    200,
+  );
+  assert.equal((await request("extension/summary", input)).status, 403);
+});
+test("companion expiry, account change, operator pin and deletion fail closed", async () => {
+  enableRelay();
+  const input = { id: relayId, nonce: relayNonce };
+  await request("extension/start", input);
+  sqlite.prepare("UPDATE extension_devices SET expires=0").run();
+  assert.equal(
+    (await request("extension/approve", { ...input, approved: true })).status,
+    409,
+  );
+  await request("extension/start", input);
+  await request("extension/approve", { ...input, approved: true });
+  sqlite
+    .prepare(
+      "UPDATE tenants SET connection_epoch=connection_epoch+1 WHERE id=?",
+    )
+    .run("A");
+  assert.equal((await request("extension/summary", input)).status, 403);
+  globalThis.__backend.env.INBOX_EXTENSION_ORIGIN = "https://other.example";
+  assert.equal((await request("extension/summary", input)).status, 503);
+  assert.equal(
+    (await request("extension/revoke", { id: relayId })).status,
+    200,
+  );
+  enableRelay();
+  await request("extension/start", input);
+  await request("extension/approve", { ...input, approved: true });
+  const exported = await request("export", {});
+  assert.ok(exported.data.extensionDevices.length);
+  assert.equal(JSON.stringify(exported.data).includes(relayNonce), false);
+  assert.equal(JSON.stringify(exported.data).includes("nonce_hash"), false);
+  await request("delete-account", { confirmation: "DELETE" });
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM extension_devices").get().n,
+    0,
+  );
+  assert.equal((await request("extension/summary", input)).status, 403);
 });

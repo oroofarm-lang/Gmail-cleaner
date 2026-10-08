@@ -165,3 +165,17 @@ export const aiConsents = sqliteTable("ai_consents", {
   epoch: text("epoch").notNull(),
   updated: integer("updated").notNull(),
 });
+
+export const extensionDevices = sqliteTable(
+  "extension_devices",
+  {
+    id: text("id").primaryKey(),
+    tenant: text("tenant").notNull(),
+    nonceHash: text("nonce_hash").notNull(),
+    connectionEpoch: integer("connection_epoch").notNull(),
+    status: text("status").notNull(),
+    created: integer("created").notNull(),
+    expires: integer("expires").notNull(),
+  },
+  (t) => [index("extension_devices_tenant").on(t.tenant, t.expires)],
+);

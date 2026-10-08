@@ -592,3 +592,133 @@ test("synthetic AI analysis asks permission for the selected message", async ({
   expect(analyses).toBe(1);
   await page.unrouteAll({ behavior: "wait" });
 });
+
+test("synthetic companion sharing needs approval, supports cancel and recovers revoked state", async ({
+  page,
+}) => {
+  const id = "867a5094-73ba-42ee-a41b-54a0f217ba6b",
+    nonce = "1".repeat(64);
+  await page.addInitScript(
+    ({ id, nonce }) => {
+      let paired = false;
+      (window as unknown as { chrome: unknown }).chrome = {
+        runtime: {
+          sendMessage(
+            _id: string,
+            payload: { kind: string },
+            callback: (result: unknown) => void,
+          ) {
+            if (payload.kind === "hello") callback({ id, nonce, paired });
+            else if (payload.kind === "reset") {
+              paired = false;
+              callback({ reset: true });
+            } else {
+              paired = true;
+              callback({ received: true });
+            }
+          },
+        },
+      };
+    },
+    { id, nonce },
+  );
+  let approved = false,
+    revoked = false,
+    starts = 0;
+  await page.route("**/api/extension", (route) =>
+    route.fulfill({
+      json: {
+        enabled: true,
+        extensionId: "a".repeat(32),
+        devices: approved
+          ? [
+              {
+                id,
+                status: "active",
+                created: Date.now(),
+                expires: Date.now() + 1e6,
+              },
+            ]
+          : [],
+      },
+    }),
+  );
+  await page.route("**/api/extension/*", async (route) => {
+    const operation = new URL(route.request().url()).pathname.split("/").at(-1);
+    if (operation === "start") {
+      starts++;
+      await route.fulfill({ json: { id } });
+    } else if (operation === "approve") {
+      expect(route.request().postDataJSON().approved).toBe(true);
+      approved = true;
+      revoked = false;
+      await route.fulfill({ json: { approved: true } });
+    } else if (operation === "revoke") {
+      approved = false;
+      revoked = true;
+      await route.fulfill({ json: { revoked: true } });
+    } else if (operation === "summary")
+      await route.fulfill({
+        status: revoked ? 403 : 200,
+        json: revoked
+          ? { error: "Companion approval revoked." }
+          : {
+              version: 1,
+              issued: Date.now(),
+              expires: Date.now() + 120000,
+              source: "demo",
+              connected: false,
+              total: 100,
+              protected: 50,
+              actions: 2,
+            },
+      });
+  });
+  await page.goto("/?view=settings");
+  const section = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Chrome companion", exact: true }),
+  });
+  await section
+    .getByRole("button", { name: "Connect or refresh companion", exact: true })
+    .click();
+  await expect(
+    section.getByRole("group", { name: "Confirm companion sharing" }),
+  ).toBeVisible();
+  expect(approved).toBe(false);
+  await section
+    .getByRole("button", { name: "Cancel pairing", exact: true })
+    .click();
+  await expect(section.getByRole("group")).toHaveCount(0);
+  await section
+    .getByRole("button", { name: "Connect or refresh companion", exact: true })
+    .click();
+  await section
+    .getByRole("button", { name: "Approve read-only sharing", exact: true })
+    .click();
+  await expect(section).toContainText("Summary sent.");
+  expect(approved).toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await section
+    .getByRole("button", {
+      name: `Revoke device ${id.slice(0, 8)}`,
+      exact: true,
+    })
+    .click();
+  await section
+    .getByRole("button", { name: "Connect or refresh companion", exact: true })
+    .click();
+  await expect(
+    section.getByRole("button", {
+      name: "Start new companion approval",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await section
+    .getByRole("button", { name: "Start new companion approval", exact: true })
+    .click();
+  await expect(
+    section.getByRole("group", { name: "Confirm companion sharing" }),
+  ).toBeVisible();
+  expect(approved).toBe(false);
+  expect(starts).toBe(3);
+});

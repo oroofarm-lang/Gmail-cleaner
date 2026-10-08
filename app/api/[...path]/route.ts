@@ -22,6 +22,7 @@ import {
   AI_CONSENT_VERSION,
 } from "@/lib/ai-consent";
 import { gmailRoute } from "@/lib/gmail-server";
+import { extensionRelay, relayConfiguration } from "@/lib/extension-relay";
 const idSchema = z.string().min(1).max(300);
 async function handle(req: Request) {
   try {
@@ -51,6 +52,39 @@ async function handle(req: Request) {
     }
     if (path.startsWith("gmail/") || path.startsWith("oauth/"))
       return await gmailRoute(req, path, t);
+    if (path === "extension" && req.method === "GET")
+      return json({
+        ...relayConfiguration(new URL(req.url).origin),
+        devices: (
+          await db
+            .prepare(
+              "SELECT id,status,created,expires FROM extension_devices WHERE tenant=? ORDER BY created DESC LIMIT 10",
+            )
+            .bind(t.id)
+            .all()
+        ).results,
+      });
+    if (
+      /^extension\/(start|approve|summary|revoke)$/.test(path) &&
+      req.method === "POST"
+    ) {
+      const operation = path.split("/")[1] as
+        "start" | "approve" | "summary" | "revoke";
+      const input = z
+        .object({
+          id: z.string().uuid(),
+          nonce:
+            operation === "revoke"
+              ? z.undefined()
+              : z.string().regex(/^[a-f0-9]{64}$/),
+          approved: operation === "approve" ? z.literal(true) : z.undefined(),
+        })
+        .strict()
+        .parse(await req.json());
+      return json(
+        await extensionRelay(t.id, new URL(req.url).origin, operation, input),
+      );
+    }
     if (path === "state" && req.method === "GET") return json(await state(t));
     if (req.method !== "POST")
       throw new ApiError(404, "This page could not be found.");
@@ -550,6 +584,14 @@ async function handle(req: Request) {
           version: 1,
           exportedAt: new Date().toISOString(),
           settings: t.settings,
+          extensionDevices: (
+            await db
+              .prepare(
+                "SELECT id,status,created,expires FROM extension_devices WHERE tenant=? ORDER BY created LIMIT 10",
+              )
+              .bind(t.id)
+              .all()
+          ).results,
           aiConsent: await db
             .prepare(
               "SELECT enabled,version,scope,model,updated FROM ai_consents WHERE tenant=?",
@@ -624,6 +666,7 @@ async function handle(req: Request) {
         "sync_pages",
         "sync_schedules",
         "ai_consents",
+        "extension_devices",
       ];
       await db.batch([
         ...tables.map((table) =>

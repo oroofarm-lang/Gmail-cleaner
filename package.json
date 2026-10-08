@@ -25,7 +25,8 @@
     "test:scheduler-runtime": "node --test tests/runtime/scheduler.test.mjs",
     "test:a11y": "playwright test --grep accessibility",
     "test:visual": "playwright test --grep visual",
-    "release:check": "node scripts/release-check.mjs"
+    "release:check": "node scripts/release-check.mjs",
+    "test:extension-runtime": "node --test tests/runtime/extension.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

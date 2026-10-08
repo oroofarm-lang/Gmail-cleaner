@@ -1,16 +1,16 @@
 # Data inventory and trust boundaries
 
-| Data                  | Location                                | Purpose                      | Access boundary                          | Current evidence                                  |
-| --------------------- | --------------------------------------- | ---------------------------- | ---------------------------------------- | ------------------------------------------------- |
-| Synthetic groups      | D1 `mail_groups`, source=demo           | Interactive demo             | Gateway tenant                           | Demo only; aggregate counts are fixtures          |
-| Tenant settings/rules | D1 `tenants`, `rules`                   | Protections and policy       | Tenant-scoped repository                 | Validate all writes and disable rules on deletion |
-| Gmail metadata        | D1 `messages`, source-bound jobs/groups | Scan/classification          | Server and authenticated owner           | Adapter exists; live ingestion unverified         |
-| OAuth tokens          | D1 `credentials` encrypted envelope     | Provider authorization       | Server only, AES-GCM account binding     | Live credential lifecycle unverified              |
-| OAuth transaction     | D1 `oauth_transactions`                 | PKCE/state replay prevention | Tenant/session bound, single consumption | Expiry/atomic consume require route tests         |
-| Plans/actions         | D1 `plans`, `actions`                   | Preview, audit, undo         | Tenant + source                          | Demo results cannot establish Gmail undo          |
-| AI input              | OpenAI HTTPS                            | Optional typed proposals     | Consent + bounded metadata               | Live credentials/consent path unverified          |
-| Dashboard URL         | Chrome local storage                    | Open dashboard               | Device extension                         | No network requests or inbox data                 |
-| Operational events    | Runtime logs                            | Reliability/security         | Operator                                 | Never include email text or tokens                |
+| Data                  | Location                                | Purpose                      | Access boundary                          | Current evidence                                       |
+| --------------------- | --------------------------------------- | ---------------------------- | ---------------------------------------- | ------------------------------------------------------ |
+| Synthetic groups      | D1 `mail_groups`, source=demo           | Interactive demo             | Gateway tenant                           | Demo only; aggregate counts are fixtures               |
+| Tenant settings/rules | D1 `tenants`, `rules`                   | Protections and policy       | Tenant-scoped repository                 | Validate all writes and disable rules on deletion      |
+| Gmail metadata        | D1 `messages`, source-bound jobs/groups | Scan/classification          | Server and authenticated owner           | Adapter exists; live ingestion unverified              |
+| OAuth tokens          | D1 `credentials` encrypted envelope     | Provider authorization       | Server only, AES-GCM account binding     | Live credential lifecycle unverified                   |
+| OAuth transaction     | D1 `oauth_transactions`                 | PKCE/state replay prevention | Tenant/session bound, single consumption | Expiry/atomic consume require route tests              |
+| Plans/actions         | D1 `plans`, `actions`                   | Preview, audit, undo         | Tenant + source                          | Demo results cannot establish Gmail undo               |
+| AI input              | OpenAI HTTPS                            | Optional typed proposals     | Consent + bounded metadata               | Live credentials/consent path unverified               |
+| Dashboard URL         | Chrome local storage                    | Open dashboard               | Device extension                         | Launcher only; optional approved aggregate relay below |
+| Operational events    | Runtime logs                            | Reliability/security         | Operator                                 | Never include email text or tokens                     |
 
 Required flows: browser → gateway → same-origin API → tenant repository → deterministic policy → fixed-origin provider. Email headers/snippets and unsubscribe targets are attacker-controlled data. External destinations cannot become instructions. See threat model and retention plan.
 
@@ -35,3 +35,7 @@ Credentials contain a nonsecret app permission (`readonly` or `modify`) alongsid
 D1 `ai_consents` stores tenant, enabled state, disclosure version, purpose (`commands` or `metadata`), configured model ID, consent epoch and updated timestamp. State/export include preferences but exclude epoch. No model input/output is recorded in this table. Explicit revoke rotates epoch and enters Privacy Mode; re-grant cannot resume an older request. Gmail reconnect/disconnect revokes metadata purpose. Local data/account deletion removes consent. Old privacy snapshots and unrelated settings/protection changes cannot re-enable a revoked consent row.
 
 Only command-only input or confirmed sender-domain/redacted-subject/system-label metadata goes to fixed-origin OpenAI Responses, without tools, bodies/snippets or custom labels. Both dispatch and response presentation check current consent. Fresh deterministic policy can only constrain AI advice; model results cannot create approved rules or authorize cleanup. This is synthetic actual-adapter evidence; real provider and deployed retention/restore remain UNVERIFIED.
+
+## Read-only companion relay
+
+`extension_devices` stores device UUID, tenant, SHA256 challenge hash, connection epoch, pending/active status and creation/expiry. Raw challenge is never persisted server-side or exported. Pending approval expires after2 minutes; active approval after30 days. Expired rows are pruned on owner pairing; scheduled retention is a separate unfinished operations gate. Privacy export includes safe device/status/timestamps; data/account deletion erases records. Gmail lifecycle epoch invalidates authorization. Browser storage retains device/challenge plus last aggregate projection until Forget/replacement/uninstall; two-minute display expiry does not delete stored data. No mail identifiers, subjects, addresses or provider credentials are relayed.

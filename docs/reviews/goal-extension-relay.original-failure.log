@@ -1,0 +1,28 @@
+✖ confirmed original recovery defect: paired local hello survives server epoch invalidation (5.8235ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 219.481166
+
+✖ failing tests:
+
+test at docs/reviews/goal-extension-relay.support.mjs:50:1
+✖ confirmed original recovery defect: paired local hello survives server epoch invalidation (5.8235ms)
+  AssertionError [ERR_ASSERTION]: original UI chooses summary rather than fresh start; server rejects the only chosen action
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///Users/ohadfait/Desktop/%D7%A4%D7%A8%D7%95%D7%99%D7%99%D7%A7%D7%98%D7%99%D7%9D/Mail%20Clean/inbox-agent/docs/reviews/goal-extension-relay.support.mjs:54:63)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

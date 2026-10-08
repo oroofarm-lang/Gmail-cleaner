@@ -7,6 +7,13 @@ const manifest = JSON.parse(await readFile(resolve(source, 'manifest.json'), 'ut
 if (manifest.manifest_version !== 3 || manifest.permissions.join(',') !== 'sidePanel,storage' || manifest.host_permissions || manifest.content_scripts) throw new Error('Unexpected extension capabilities');
 await rm(output, { recursive: true, force: true });
 await cp(source, output, { recursive: true });
+const relayOrigin = process.env.INBOX_EXTENSION_ORIGIN;
+if (relayOrigin) {
+  const url = new URL(relayOrigin);
+  if (url.protocol !== 'https:' || url.origin !== relayOrigin || url.username || url.password || url.hostname.includes('*')) throw new Error('Relay requires an exact HTTPS origin');
+  manifest.externally_connectable = { matches: [relayOrigin + '/*'], ids: [] };
+  await writeFile(resolve(output, 'relay-config.js'), `export const relayOrigin = ${JSON.stringify(relayOrigin)};\n`);
+}
 await mkdir(resolve(output, 'icons'), { recursive: true });
 function crc32(bytes) {
   let crc = 0xffffffff;
@@ -36,4 +43,4 @@ function icon(size) {
 }
 for (const size of [16, 32, 48, 128]) await writeFile(resolve(output, `icons/${size}.png`), icon(size));
 await writeFile(resolve(output, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-console.log('Extension built: dist/extension (load unpacked in Chrome). Pairing is unavailable.');
+console.log(`Extension built: dist/extension. ${relayOrigin ? 'Pinned dashboard relay packaged; backend approval and live Chrome verification required.' : 'Relay disabled; dashboard launcher only.'}`);

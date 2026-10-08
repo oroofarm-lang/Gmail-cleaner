@@ -28,6 +28,7 @@ jobs:
       - run: npm run build:extension
       - run: npm run test:scheduler-runtime
       - run: npx playwright install --with-deps chromium
+      - run: npm run test:extension-runtime
       - run: npm run test:e2e
       - run: npm run release:check -- --preview
       - uses: actions/upload-artifact@v4

@@ -12,7 +12,7 @@ Inbox Agent analyzes Gmail metadata to identify cleanup candidates and protect i
 
 When users authorize live Gmail functionality, the server may store account email address; message identifier/thread, sender and subject; dates, labels, size, mailing-list/unsubscribe headers and reply/attachment signals; classifications; protections/preferences; rules; inventory progress; plans and per-message actions. The current scanner requests metadata; routine cleanup does not need message bodies or attachments. OAuth tokens are held server-side in an encrypted authenticated envelope, not browser or extension storage.
 
-The local Chrome companion stores only your configured HTTPS dashboard address on your device. It does not read Gmail, scrape websites or call a mailbox API. Opening a link navigates to the authenticated dashboard. Forget address or uninstall clears the saved address.
+The default Chrome companion stores your configured HTTPS dashboard address. When the operator configures the optional trusted relay and you approve sharing, it also stores a device challenge and last aggregate summary: source, connection boolean and total/protected/action counts. It does not receive subjects, addresses, mail content or provider credentials and does not scrape Gmail or call a mailbox API. Counts stop displaying after two minutes, but local records remain until Forget, replacement or uninstall. Approval lasts up to 30 days; reconnect invalidates it. Revoke in the dashboard blocks new summaries; delivered counts may remain visible until their freshness expires. Forget companion clears local approval and counts; separately revoke server approval in the dashboard. Forget address clears the launcher URL.
 
 ## Purpose and sharing
 

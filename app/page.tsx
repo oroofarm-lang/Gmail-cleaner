@@ -214,6 +214,7 @@ async function api<T = Record<string, unknown>>(path: string, body?: unknown) {
     throw new Error(d.error ?? "Something went wrong. Please try again.");
   return d;
 }
+import { ExtensionSettings } from "@/components/inbox/extension-settings";
 export default function App() {
   const [data, setData] = useState<State | null>(null),
     [busy, setBusy] = useState(""),
@@ -1867,6 +1868,7 @@ export default function App() {
                       Delete account
                     </button>
                   </section>
+                  <ExtensionSettings />
                   <section className="settings-wide">
                     <h2>Transparency, in plain language.</h2>
                     <p>
