@@ -71,6 +71,13 @@ type State = {
     theme: string;
     notifications: boolean;
   };
+  aiConsent?: {
+    enabled: number;
+    version: number;
+    scope: string;
+    model: string;
+    updated: number;
+  } | null;
   connection: { email: string; permission?: string } | null;
   job: { processed: number; status: string } | null;
   syncSchedule: {
@@ -221,6 +228,9 @@ export default function App() {
     [menu, setMenu] = useState(false),
     [confirm, setConfirm] = useState(""),
     [confirmText, setConfirmText] = useState("");
+  const [aiConsentScope, setAiConsentScope] = useState<"commands" | "metadata">(
+    "commands",
+  );
   const [syncInterval, setSyncInterval] = useState(60);
   const scanPaused = useRef(false);
   useEffect(
@@ -1214,6 +1224,12 @@ export default function App() {
                   )}
                   {!demoMode && (
                     <LiveMessages
+                      aiEnabled={
+                        data.capabilities.ai &&
+                        data.settings.privacy === "smart" &&
+                        data.aiConsent?.enabled === 1 &&
+                        data.aiConsent.scope === "metadata"
+                      }
                       busy={busy}
                       setBusy={setBusy}
                       setError={setError}
@@ -1681,7 +1697,7 @@ export default function App() {
                         [
                           "smart",
                           "Smart Mode",
-                          "Allow explicit metadata analysis requests to OpenAI. Email bodies stay excluded.",
+                          "Share commands and, only if approved separately, selected mail metadata with OpenAI.",
                         ],
                       ].map(([v, label, description]) => (
                         <label className="radio-option" key={v}>
@@ -1690,14 +1706,19 @@ export default function App() {
                             name="privacy"
                             value={v}
                             checked={data.settings.privacy === v}
-                            onChange={() =>
-                              void act(
-                                "privacy",
-                                "settings",
-                                { privacy: v },
-                                "Privacy preference saved.",
-                              )
-                            }
+                            disabled={v === "smart" && !data.capabilities.ai}
+                            onChange={() => {
+                              if (v === "smart") {
+                                setAiConsentScope("commands");
+                                setConfirm("ai-consent");
+                              } else
+                                void act(
+                                  "privacy",
+                                  "settings",
+                                  { privacy: v },
+                                  "Privacy Mode enabled. Future AI requests are blocked.",
+                                );
+                            }}
                           />
                           <span>
                             <strong>{label}</strong>
@@ -1706,6 +1727,36 @@ export default function App() {
                         </label>
                       ))}
                     </fieldset>
+                    <button
+                      className="text-button"
+                      disabled={!data.capabilities.ai}
+                      onClick={() => {
+                        setAiConsentScope("commands");
+                        setConfirm("ai-consent");
+                      }}
+                    >
+                      Review AI sharing choices
+                    </button>
+                    {data.aiConsent?.enabled === 1 && (
+                      <button
+                        className="text-button"
+                        onClick={() =>
+                          void act(
+                            "ai-revoke",
+                            "ai-consent",
+                            {
+                              enabled: false,
+                              scope: "commands",
+                              version: 1,
+                              approved: true,
+                            },
+                            "AI sharing revoked. Already dispatched requests cannot be recalled.",
+                          )
+                        }
+                      >
+                        Revoke AI sharing
+                      </button>
+                    )}
                     <p className="muted">
                       {data.capabilities.ai
                         ? "AI provider configured."
@@ -1973,23 +2024,42 @@ export default function App() {
           <h2 id="confirm-title">
             {confirm.startsWith("unsubscribe:")
               ? "Leave this list?"
-              : confirm === "gmail-permission"
-                ? "Allow Gmail mailbox changes?"
-                : confirm === "disconnect"
-                  ? "Disconnect Gmail?"
-                  : "Delete stored data?"}
+              : confirm === "ai-consent"
+                ? "Share data with OpenAI?"
+                : confirm === "gmail-permission"
+                  ? "Allow Gmail mailbox changes?"
+                  : confirm === "disconnect"
+                    ? "Disconnect Gmail?"
+                    : "Delete stored data?"}
           </h2>
           <p>
             {confirm.startsWith("unsubscribe:")
               ? demoMode
                 ? "This simulates unsubscribe for this list. No real request is sent. Its old messages stay until you review a cleanup."
                 : "A safe one-click transport is not configured. Use the sender’s unsubscribe option in Gmail."
-              : confirm === "gmail-permission"
-                ? "Continue to Google to allow reversible mailbox changes for the connected account. This does not approve cleanup. Every plan still needs your approval, and the app never permanently deletes messages. Google’s permission also includes broader capabilities; this app does not send mail."
-                : confirm === "disconnect"
-                  ? "Google access will be revoked. Your Gmail messages stay. Stored analysis remains until you delete it."
-                  : "This removes your app analysis, rules and activity. It never deletes Gmail messages. Disconnect Gmail first. Account deletion prevents reuse until an explicit new signup."}
+              : confirm === "ai-consent"
+                ? "Your assistant commands go to OpenAI. If you separately approve a message, only its sender domain, redacted subject and standard Gmail labels are shared. Bodies, snippets, attachments, custom labels and account identity are excluded. Subjects and commands may still contain personal information. AI only advises; it cannot approve cleanup or override protections. We request store:false; provider security retention may still apply. Revoke sharing in Settings; already sent requests cannot be recalled."
+                : confirm === "gmail-permission"
+                  ? "Continue to Google to allow reversible mailbox changes for the connected account. This does not approve cleanup. Every plan still needs your approval, and the app never permanently deletes messages. Google’s permission also includes broader capabilities; this app does not send mail."
+                  : confirm === "disconnect"
+                    ? "Google access will be revoked. Your Gmail messages stay. Stored analysis remains until you delete it."
+                    : "This removes your app analysis, rules and activity. It never deletes Gmail messages. Disconnect Gmail first. Account deletion prevents reuse until an explicit new signup."}
           </p>
+          {confirm === "ai-consent" && (
+            <label className="radio-option">
+              <input
+                type="checkbox"
+                checked={aiConsentScope === "metadata"}
+                onChange={(e) =>
+                  setAiConsentScope(e.target.checked ? "metadata" : "commands")
+                }
+              />
+              <span>
+                Also allow separately approved message metadata. Leave unchecked
+                to share only assistant commands.
+              </span>
+            </label>
+          )}
           {confirm.startsWith("unsubscribe:") &&
             !demoMode &&
             manualUnsubscribe && (
@@ -2052,6 +2122,21 @@ export default function App() {
                 (confirm.startsWith("delete") && confirmText !== "DELETE")
               }
               onClick={async () => {
+                if (confirm === "ai-consent") {
+                  const saved = await act(
+                    "confirm",
+                    "ai-consent",
+                    {
+                      enabled: true,
+                      scope: aiConsentScope,
+                      version: 1,
+                      approved: true,
+                    },
+                    "AI sharing consent saved. Each message still needs separate approval.",
+                  );
+                  if (saved) setConfirm("");
+                  return;
+                }
                 if (confirm === "gmail-permission") {
                   setBusy("confirm");
                   try {
@@ -2122,11 +2207,13 @@ export default function App() {
                 ? demoMode
                   ? "Confirm unsubscribe"
                   : "Review manual options"
-                : confirm === "gmail-permission"
-                  ? "Continue to Google"
-                  : confirm === "disconnect"
-                    ? "Disconnect"
-                    : "Delete app data"}
+                : confirm === "ai-consent"
+                  ? "Approve AI sharing"
+                  : confirm === "gmail-permission"
+                    ? "Continue to Google"
+                    : confirm === "disconnect"
+                      ? "Disconnect"
+                      : "Delete app data"}
             </button>
           </div>
         </dialog>
@@ -2135,17 +2222,23 @@ export default function App() {
   );
 }
 function LiveMessages({
+  aiEnabled,
   busy,
   setBusy,
   setError,
   onComplete,
 }: {
+  aiEnabled: boolean;
   busy: string;
   setBusy: (s: string) => void;
   setError: (s: string) => void;
   onComplete: () => Promise<void>;
 }) {
   const [analysis, setAnalysis] = useState("");
+  const [aiMessage, setAiMessage] = useState<{
+    id: string;
+    metadata: { subject: string; sender: string };
+  } | null>(null);
   const [resultText, setResultText] = useState("");
   const [messages, setMessages] = useState<
       {
@@ -2211,22 +2304,10 @@ function LiveMessages({
             <button
               type="button"
               className="text-button"
-              onClick={async (e) => {
+              disabled={!aiEnabled || !!busy}
+              onClick={(e) => {
                 e.preventDefault();
-                try {
-                  setAnalysis(
-                    JSON.stringify(
-                      await api("analyze-message", {
-                        id: m.id,
-                        approved: true,
-                      }),
-                      null,
-                      2,
-                    ),
-                  );
-                } catch (e) {
-                  setError((e as Error).message);
-                }
+                setAiMessage(m);
               }}
             >
               Analyze metadata with AI (Smart Mode)
@@ -2234,6 +2315,58 @@ function LiveMessages({
           </span>
         </label>
       ))}
+      {aiMessage && (
+        <dialog
+          className="review-dialog compact"
+          ref={(el) => {
+            if (el && !el.open) el.showModal();
+          }}
+          onCancel={() => setAiMessage(null)}
+          onKeyDown={trapDialogTab}
+          aria-labelledby="ai-message-title"
+        >
+          <h2 id="ai-message-title">Send selected metadata to OpenAI?</h2>
+          <p>{aiMessage.metadata.subject}</p>
+          <p>
+            Only sender domain, redacted subject and standard labels are shared.
+            No body, snippet or attachment is sent. This may still reveal
+            personal information. Provider retention may apply. This request
+            cannot change your mail.
+          </p>
+          <button
+            className="button secondary"
+            onClick={() => setAiMessage(null)}
+          >
+            Cancel
+          </button>
+          <button
+            className="button"
+            disabled={!!busy}
+            onClick={async () => {
+              setBusy("ai-analysis");
+              try {
+                setAnalysis(
+                  JSON.stringify(
+                    await api("analyze-message", {
+                      id: aiMessage.id,
+                      approved: true,
+                    }),
+                    null,
+                    2,
+                  ),
+                );
+                setAiMessage(null);
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy("");
+              }
+            }}
+          >
+            Send metadata for advice
+          </button>
+        </dialog>
+      )}
       {analysis && <pre className="analysis-result">{analysis}</pre>}
       {selected.length > 0 && (
         <button

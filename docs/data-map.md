@@ -29,3 +29,9 @@ D1 `jobs.cursor` stores the current full/history phase, opaque page cursor, swee
 ## OAuth application permission
 
 Credentials contain a nonsecret app permission (`readonly` or `modify`) alongside encrypted tokens and account generation. State returns permission to explain available actions; credentials still remain excluded from export. OAuth transactions additionally record requested scope and, for upgrades, the pinned account email. They are server-only, single-use and epoch-fenced. Refresh preserves previously validated scope when the provider omits it. Neither a browser parameter nor a combined provider grant can upgrade the stored app permission without the explicit upgrade transaction.
+
+## AI sharing consent and advisory flow
+
+D1 `ai_consents` stores tenant, enabled state, disclosure version, purpose (`commands` or `metadata`), configured model ID, consent epoch and updated timestamp. State/export include preferences but exclude epoch. No model input/output is recorded in this table. Explicit revoke rotates epoch and enters Privacy Mode; re-grant cannot resume an older request. Gmail reconnect/disconnect revokes metadata purpose. Local data/account deletion removes consent. Old privacy snapshots and unrelated settings/protection changes cannot re-enable a revoked consent row.
+
+Only command-only input or confirmed sender-domain/redacted-subject/system-label metadata goes to fixed-origin OpenAI Responses, without tools, bodies/snippets or custom labels. Both dispatch and response presentation check current consent. Fresh deterministic policy can only constrain AI advice; model results cannot create approved rules or authorize cleanup. This is synthetic actual-adapter evidence; real provider and deployed retention/restore remain UNVERIFIED.

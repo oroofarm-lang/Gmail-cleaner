@@ -155,3 +155,13 @@ export const schedulerHealth = sqliteTable("scheduler_health", {
   lastTick: integer("last_tick").notNull(),
   lastCompleted: integer("last_completed"),
 });
+
+export const aiConsents = sqliteTable("ai_consents", {
+  tenant: text("tenant").primaryKey(),
+  enabled: integer("enabled").notNull().default(0),
+  version: integer("version").notNull(),
+  scope: text("scope").notNull(),
+  model: text("model").notNull(),
+  epoch: text("epoch").notNull(),
+  updated: integer("updated").notNull(),
+});

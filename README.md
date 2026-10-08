@@ -25,7 +25,7 @@ Click **Explore a demo**. The server seeds 13 synthetic aggregate groups represe
 - Gmail OAuth starts readonly, requires explicit same-account permission upgrade for cleanup/Undo, and enforces local/token/dispatch permissions. PKCE/single-use state, AES-GCM encrypted tokens, refresh with account/generation-bound compare-and-swap, revocation and epoch-fenced cancellation of in-flight callbacks.
 - Resumable read-only Gmail full/history synchronization using body-free MIME/metadata projection, atomic inventory/cursor commits, generation-bound leases, safe history-expiry full resync, complete-sweep pruning and persistent pagination-cycle detection. UI can pause after the current page and resume or restart interrupted inventory.
 - Message-level Gmail plans, explicit approval, fresh thread/protection/MIME checks, tenant serialization, provider action ledger, conservative uncertain state and Undo.
-- Optional OpenAI Responses intent/classification adapters with strict schemas, no tools, metadata minimization and deterministic policy authority.
+- Optional OpenAI Responses adapters with operator opt-in, versioned purpose/model-bound user consent, per-message confirmation, immediate dispatch/revoke checks, minimized metadata, strict schemas, no tools and authoritative deterministic policy.
 - Minimal MV3 sidepanel dashboard companion with original icons and no mailbox credentials.
 - Keyboard, accessibility, viewport and functional regression test definitions; independent adversarial source/runtime tests.
 

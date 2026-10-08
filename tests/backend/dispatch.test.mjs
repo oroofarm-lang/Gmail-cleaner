@@ -11,7 +11,8 @@ const authSource =
   "export async function getChatGPTUser(){return globalThis.__backend.user}";
 const envSource = "export const env=globalThis.__backend.env";
 const gmailSource = `export { GmailClient, GmailMutationNotDispatched, headerValue, hasAttachmentOrUncertainty } from '${pathToFileURL(path.join(root, "packages/integrations/gmail.ts")).href}';
-export const interpretCommand=()=>{},OpenAIClassifier=class {};
+export { OpenAIClassifier } from '${pathToFileURL(path.join(root, "packages/integrations/ai.ts")).href}';
+export { interpretCommand } from '${pathToFileURL(path.join(root, "packages/integrations/assistant.ts")).href}';
 export async function decryptTokens(){if(globalThis.__backend.decryptHook)await globalThis.__backend.decryptHook();return {access_token:'synthetic-old-account-token',expires_in:3600,refresh_token:'synthetic-refresh',scope:'https://www.googleapis.com/auth/gmail.modify'}}
 export async function encryptTokens(){return 'encrypted-test-token'}
 export async function revokeGoogleToken(){}
@@ -129,6 +130,9 @@ beforeEach(() => {
   globalThis.__backend.beforeRun = null;
   globalThis.__backend.decryptHook = null;
   globalThis.__backend.oauthTokens = null;
+  globalThis.__backend.env.AI_PROCESSING = "disabled";
+  delete globalThis.__backend.env.OPENAI_API_KEY;
+  delete globalThis.__backend.env.OPENAI_MODEL;
   globalThis.__backend.authorization = null;
   sqlite?.close();
   sqlite = new DatabaseSync(":memory:");
@@ -446,6 +450,9 @@ test("actual adapter: expired Undo token completion cannot mutate after reconcil
     assert.equal((await request("gmail/reconcile", {})).status, 200);
     globalThis.__backend.decryptHook = null;
     globalThis.__backend.oauthTokens = null;
+    globalThis.__backend.env.AI_PROCESSING = "disabled";
+    delete globalThis.__backend.env.OPENAI_API_KEY;
+    delete globalThis.__backend.env.OPENAI_MODEL;
     globalThis.__backend.authorization = null;
     assert.equal((await request("gmail/undo", { actionId: a.id })).status, 200);
     const before = calls.length;
@@ -1424,5 +1431,316 @@ test("OAuth: modify callback commit cannot overwrite a changed current account",
   assert.equal(
     sqlite.prepare("SELECT generation FROM credentials").get().generation,
     "replacement",
+  );
+});
+
+async function aiFixture(scope = "metadata") {
+  const fixture = await setupLive(),
+    original = globalThis.fetch,
+    payloads = [];
+  Object.assign(globalThis.__backend.env, {
+    AI_PROCESSING: "enabled",
+    OPENAI_API_KEY: "synthetic-ai-key",
+    OPENAI_MODEL: "synthetic-model",
+  });
+  const control = {
+    hook: null,
+    result: {
+      category: "promotion",
+      recommendation: "trash",
+      confidence: 0.99,
+      reason: "synthetic advice",
+      protected: false,
+    },
+  };
+  globalThis.fetch = async (url, options) => {
+    if (new URL(url).origin !== "https://api.openai.com")
+      return original(url, options);
+    assert.equal(new URL(url).pathname, "/v1/responses");
+    assert.equal(options.method, "POST");
+    payloads.push(JSON.parse(options.body));
+    if (control.hook) await control.hook();
+    return Response.json({
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          content: [
+            { type: "output_text", text: JSON.stringify(control.result) },
+          ],
+        },
+      ],
+    });
+  };
+  assert.equal(
+    (
+      await request("ai-consent", {
+        enabled: true,
+        scope,
+        version: 1,
+        approved: true,
+      })
+    ).status,
+    200,
+  );
+  return { ...fixture, payloads, control };
+}
+test("AI: Smart Mode shortcut and operator-disabled provider cannot bypass explicit consent", async () => {
+  await setupLive();
+  assert.equal((await request("settings", { privacy: "smart" })).status, 503);
+  assert.equal(
+    (
+      await request("ai-consent", {
+        enabled: true,
+        scope: "metadata",
+        version: 1,
+        approved: true,
+      })
+    ).status,
+    503,
+  );
+  Object.assign(globalThis.__backend.env, {
+    AI_PROCESSING: "enabled",
+    OPENAI_API_KEY: "synthetic",
+    OPENAI_MODEL: "synthetic",
+  });
+  assert.equal((await request("settings", { privacy: "smart" })).status, 403);
+  assert.equal(
+    (
+      await request("ai-consent", {
+        enabled: true,
+        scope: "metadata",
+        version: 1,
+        approved: false,
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request("ai-consent", {
+        enabled: true,
+        scope: "metadata",
+        version: 0,
+        approved: true,
+      })
+    ).status,
+    400,
+  );
+});
+test("AI: real adapter sends only redacted minimized metadata with strict schema and no tools", async () => {
+  const { payloads, calls } = await aiFixture();
+  const row = sqlite.prepare("SELECT metadata FROM messages").get();
+  const metadata = JSON.parse(row.metadata);
+  metadata.subject =
+    "Sale alice@example.com https://private.example/token 123456789";
+  metadata.labels.push("Private medical folder");
+  metadata.snippet = "never share body";
+  sqlite
+    .prepare("UPDATE messages SET metadata=?")
+    .run(JSON.stringify(metadata));
+  const before = calls.length;
+  const result = await request("analyze-message", {
+    id: "A:m1",
+    approved: true,
+  });
+  assert.equal(result.status, 200);
+  assert.equal(payloads.length, 1);
+  const p = payloads[0],
+    limited = JSON.parse(p.input[0].content[0].text).untrusted_email_metadata;
+  assert.equal(limited.sender_domain, "shop.example");
+  assert.ok(!JSON.stringify(limited).includes("alice@example.com"));
+  assert.ok(!JSON.stringify(limited).includes("private.example"));
+  assert.ok(!JSON.stringify(limited).includes("123456789"));
+  assert.ok(!JSON.stringify(limited).includes("medical folder"));
+  assert.ok(!JSON.stringify(limited).includes("never share body"));
+  assert.equal(limited.from, undefined);
+  assert.equal(p.store, false);
+  assert.equal(p.tools, undefined);
+  assert.equal(p.text.format.strict, true);
+  assert.equal(calls.length, before);
+});
+test("AI: command-only consent cannot authorize mail metadata or another tenant", async () => {
+  const { payloads } = await aiFixture("commands");
+  assert.equal(
+    (await request("analyze-message", { id: "A:m1", approved: true })).status,
+    403,
+  );
+  assert.equal(
+    (await request("analyze-message", { id: "A:m1", approved: true }, "B"))
+      .status,
+    403,
+  );
+  assert.equal(payloads.length, 0);
+});
+test("AI: revoked consent before dispatch prevents provider request", async () => {
+  const { payloads } = await aiFixture();
+  let revoked = false;
+  globalThis.__backend.beforeQuery = async (sql) => {
+    if (
+      !revoked &&
+      sql.startsWith("SELECT metadata FROM messages WHERE id=?")
+    ) {
+      revoked = true;
+      await request("ai-consent", {
+        enabled: false,
+        scope: "metadata",
+        version: 1,
+        approved: true,
+      });
+    }
+  };
+  assert.equal(
+    (await request("analyze-message", { id: "A:m1", approved: true })).status,
+    403,
+  );
+  assert.equal(payloads.length, 0);
+});
+test("AI: revocation during a dispatched response discards advice and blocks future sharing", async () => {
+  const { payloads, control } = await aiFixture(),
+    g = gate();
+  control.hook = async () => {
+    g.arrive();
+    await g.wait;
+  };
+  const pending = request("analyze-message", { id: "A:m1", approved: true });
+  await g.entered;
+  await request("ai-consent", {
+    enabled: false,
+    scope: "metadata",
+    version: 1,
+    approved: true,
+  });
+  g.release();
+  assert.equal((await pending).status, 403);
+  assert.equal(payloads.length, 1);
+  assert.equal(
+    (await request("analyze-message", { id: "A:m1", approved: true })).status,
+    403,
+  );
+  assert.equal(payloads.length, 1);
+});
+test("AI: fresh deterministic protection overrides confident trash advice", async () => {
+  const { control, calls } = await aiFixture();
+  control.hook = async () => {
+    assert.equal(
+      (
+        await request("rules", {
+          command: "Protect offers@shop.example",
+          approved: true,
+        })
+      ).status,
+      200,
+    );
+  };
+  const before = calls.length;
+  const result = await request("analyze-message", {
+    id: "A:m1",
+    approved: true,
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.policy.action, "KEEP");
+  assert.equal(result.data.analysis.recommendation, "keep");
+  assert.equal(result.data.analysis.protected, true);
+  assert.equal(calls.length, before);
+});
+test("AI: model change and Privacy Mode block further dispatch; export omits internal consent epoch", async () => {
+  const { payloads } = await aiFixture();
+  const exported = await request("export", {});
+  assert.equal(exported.data.aiConsent.scope, "metadata");
+  assert.equal(exported.data.aiConsent.epoch, undefined);
+  globalThis.__backend.env.OPENAI_MODEL = "changed-model";
+  assert.equal(
+    (await request("analyze-message", { id: "A:m1", approved: true })).status,
+    403,
+  );
+  globalThis.__backend.env.OPENAI_MODEL = "synthetic-model";
+  await request("settings", { privacy: "privacy" });
+  assert.equal(
+    (await request("analyze-message", { id: "A:m1", approved: true })).status,
+    403,
+  );
+  assert.equal(payloads.length, 0);
+});
+
+test("AI: fresh consent cannot revive an older in-flight epoch", async () => {
+  const { control, payloads } = await aiFixture(),
+    g = gate();
+  control.hook = async () => {
+    g.arrive();
+    await g.wait;
+  };
+  const pending = request("analyze-message", { id: "A:m1", approved: true });
+  await g.entered;
+  await request("ai-consent", {
+    enabled: false,
+    scope: "metadata",
+    version: 1,
+    approved: true,
+  });
+  await request("ai-consent", {
+    enabled: true,
+    scope: "metadata",
+    version: 1,
+    approved: true,
+  });
+  g.release();
+  assert.equal((await pending).status, 403);
+  assert.equal(payloads.length, 1);
+});
+test("AI: foreign origin and forged tenant cannot approve consent", async () => {
+  await aiFixture();
+  await request("ai-consent", {
+    enabled: false,
+    scope: "metadata",
+    version: 1,
+    approved: true,
+  });
+  assert.equal(
+    (
+      await request(
+        "ai-consent",
+        { enabled: true, scope: "metadata", version: 1, approved: true },
+        "A",
+        { headers: { origin: "https://evil.example" } },
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request("ai-consent", {
+        enabled: true,
+        scope: "metadata",
+        version: 1,
+        approved: true,
+        tenant: "B",
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT enabled FROM ai_consents WHERE tenant='A'").get()
+      .enabled,
+    0,
+  );
+});
+test("AI: Gmail reconnect and disconnect invalidate metadata sharing", async () => {
+  await aiFixture();
+  assert.equal((await consentCallback()).status, 302);
+  assert.equal(
+    sqlite.prepare("SELECT enabled FROM ai_consents").get().enabled,
+    0,
+  );
+  await request("ai-consent", {
+    enabled: true,
+    scope: "metadata",
+    version: 1,
+    approved: true,
+  });
+  assert.equal((await request("gmail/disconnect", {})).status, 200);
+  assert.equal(
+    sqlite.prepare("SELECT enabled FROM ai_consents").get().enabled,
+    0,
   );
 });

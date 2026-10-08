@@ -186,6 +186,12 @@ export async function state(t: Awaited<ReturnType<typeof tenant>>) {
     job: j,
     connection: c,
     syncSchedule: schedule,
+    aiConsent: await db
+      .prepare(
+        "SELECT enabled,version,scope,model,updated FROM ai_consents WHERE tenant=?",
+      )
+      .bind(t.id)
+      .first(),
     settings: t.settings,
     user: { email: t.email },
     capabilities: {
@@ -194,7 +200,9 @@ export async function state(t: Awaited<ReturnType<typeof tenant>>) {
         config("GOOGLE_CLIENT_SECRET") &&
         config("TOKEN_ENCRYPTION_KEY")
       ),
-      ai: !!(config("OPENAI_API_KEY") && config("OPENAI_MODEL")),
+      ai:
+        config("AI_PROCESSING") === "enabled" &&
+        !!(config("OPENAI_API_KEY") && config("OPENAI_MODEL")),
       scheduledSync:
         config("GMAIL_SYNC_SCHEDULER") === "enabled" &&
         !!config("GOOGLE_CLIENT_ID") &&

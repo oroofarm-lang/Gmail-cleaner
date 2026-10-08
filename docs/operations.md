@@ -37,3 +37,9 @@ Failures use only fixed codes. Transient failures back off exponentially (up to 
 ## Gmail permission migration
 
 Drain old workers before migration0008. Existing credentials and pending OAuth transactions default to app read-only; this deliberately requires an explicit user upgrade before cleanup or Undo. Scanning and previews remain available. Settings → Allow mailbox changes → Continue to Google creates a strict, account-bound upgrade; Google approval does not approve any cleanup plan. Switching accounts during upgrade fails rather than replacing the connection. Reconnect defaults readonly and cancels scheduled consent. Actual Google consent/grant/refresh behavior still requires authorized disposable-account testing.
+
+## AI processing and consent
+
+Apply migration0009. Keep `AI_PROCESSING=disabled` until actual processor/Google-data terms, retention and hosting requirements are reviewed. Configure a server-only OpenAI key and explicit model ID, then opt in through the approved host settings flow; no live activation was done during this implementation. A model change requires fresh user consent. Settings defaults consent to commands only, with a separate checkbox for confirmed mail metadata. Each message requires its own explicit send confirmation. Revoke works even if operator configuration disappears. Already dispatched requests cannot be recalled.
+
+Consent is checked before dispatch and before returning advice. Revocation/re-grant rotate epochs; account deletion/reconnect/disconnect invalidate metadata-sharing permission. Do not log subjects, commands, tokens or model responses. AI cannot run rules, approve plans or mutate mail. Fresh deterministic KEEP/REVIEW results override model recommendations. Actual provider evaluation/retention and deployed backup/tombstone handling remain launch gates.

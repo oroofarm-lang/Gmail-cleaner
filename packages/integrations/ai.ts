@@ -49,11 +49,17 @@ const jsonSchema = {
   required: ["category", "recommendation", "confidence", "reason", "protected"],
 };
 export class OpenAIClassifier {
-  private options: { apiKey: string; model: string; fetch?: typeof fetch };
+  private options: {
+    apiKey: string;
+    model: string;
+    fetch?: typeof fetch;
+    authorize?: () => Promise<void>;
+  };
   constructor(options: {
     apiKey: string;
     model: string;
     fetch?: typeof fetch;
+    authorize?: () => Promise<void>;
   }) {
     if (!options.apiKey || !options.model)
       throw new Error("OpenAI server configuration required");
@@ -61,14 +67,26 @@ export class OpenAIClassifier {
   }
   async classify(email: ClassifierInput): Promise<EmailAnalysis> {
     // No body, attachments, URLs, account identity, tools, or action capability is sent.
+    const address = email.from.match(/<([^<>]+)>\s*$/)?.[1] ?? email.from;
+    const domain = address.split("@").at(-1)?.toLowerCase() ?? "";
     const limited = {
-      from: email.from.slice(0, 320),
-      subject: email.subject.slice(0, 500),
-      snippet: (email.snippet ?? "").slice(0, 1200),
+      sender_domain: /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)
+        ? domain.slice(0, 253)
+        : "unknown",
+      subject: email.subject
+        .slice(0, 500)
+        .replace(/https?:\/\/\S+/gi, "[link]")
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
+        .replace(/\b\d[\d -]{5,}\d\b/g, "[number]"),
       labels: (email.labels ?? [])
-        .slice(0, 20)
-        .map((label) => label.slice(0, 80)),
+        .filter((label) =>
+          /^(INBOX|UNREAD|STARRED|IMPORTANT|SENT|DRAFT|SPAM|TRASH|CATEGORY_(PERSONAL|SOCIAL|PROMOTIONS|UPDATES|FORUMS))$/.test(
+            label,
+          ),
+        )
+        .slice(0, 20),
     };
+    await this.options.authorize?.();
     const response = await (this.options.fetch ?? fetch)(
       "https://api.openai.com/v1/responses",
       {

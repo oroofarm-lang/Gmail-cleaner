@@ -374,6 +374,20 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
         : []),
       db
         .prepare(
+          `UPDATE ai_consents SET enabled=0,epoch=?,updated=? WHERE tenant=? AND scope='metadata' AND ${connectionFence}`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          Date.now(),
+          t.id,
+          t.id,
+          transaction.epoch,
+          transaction.requested_scope,
+          t.id,
+          transaction.account_email,
+        ),
+      db
+        .prepare(
           `UPDATE sync_schedules SET enabled=0,status='paused',owner=NULL,lease=0 WHERE tenant=? AND ${connectionFence}`,
         )
         .bind(
@@ -443,14 +457,18 @@ export async function gmailRoute(req: Request, path: string, t: Tenant) {
           "UPDATE sync_schedules SET enabled=0,status='paused',owner=NULL,lease=0 WHERE tenant=?",
         )
         .bind(t.id),
+      db
+        .prepare(
+          "UPDATE ai_consents SET enabled=0,epoch=?,updated=? WHERE tenant=? AND scope='metadata'",
+        )
+        .bind(crypto.randomUUID(), Date.now(), t.id),
       db.prepare("DELETE FROM credentials WHERE tenant=?").bind(t.id),
       db.prepare("DELETE FROM oauth_transactions WHERE tenant=?").bind(t.id),
       db
-        .prepare("UPDATE tenants SET settings=? WHERE id=?")
-        .bind(
-          JSON.stringify({ ...t.settings, source: "demo", autopilot: "off" }),
-          t.id,
-        ),
+        .prepare(
+          "UPDATE tenants SET settings=json_patch(settings,?) WHERE id=?",
+        )
+        .bind(JSON.stringify({ source: "demo", autopilot: "off" }), t.id),
       db
         .prepare(
           `UPDATE jobs SET status='cancelled',lease=0,owner=NULL WHERE tenant=? AND source='gmail'`,

@@ -64,6 +64,13 @@
       "when": 1791373215988,
       "tag": "0008_fancy_eternity",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791373899806,
+      "tag": "0009_familiar_enchantress",
+      "breakpoints": true
     }
   ]
 }

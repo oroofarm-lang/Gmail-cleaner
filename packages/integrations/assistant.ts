@@ -14,8 +14,14 @@ export const IntentSchema = z
   .strict();
 export async function interpretCommand(
   command: string,
-  options: { apiKey: string; model: string; fetch?: typeof fetch },
+  options: {
+    apiKey: string;
+    model: string;
+    fetch?: typeof fetch;
+    authorize?: () => Promise<void>;
+  },
 ) {
+  await options.authorize?.();
   const response = await (options.fetch ?? fetch)(
     "https://api.openai.com/v1/responses",
     {

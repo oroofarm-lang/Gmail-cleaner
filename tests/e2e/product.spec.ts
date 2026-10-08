@@ -465,3 +465,130 @@ test("synthetic read-only connection requires an explicit Google permission upgr
   expect(upgrades).toBe(1);
   await page.unrouteAll({ behavior: "wait" });
 });
+
+test("synthetic AI sharing requires disclosed scope and can be revoked", async ({
+  page,
+}) => {
+  const response = await page.request.get("/api/state"),
+    fixture = await response.json();
+  fixture.capabilities.ai = true;
+  fixture.settings.privacy = "privacy";
+  fixture.aiConsent = null;
+  const decisions: unknown[] = [];
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  await page.route("**/api/ai-consent", async (route) => {
+    const decision = route.request().postDataJSON();
+    decisions.push(decision);
+    fixture.settings.privacy = decision.enabled ? "smart" : "privacy";
+    fixture.aiConsent = {
+      enabled: Number(decision.enabled),
+      scope: decision.scope,
+      version: 1,
+      model: "synthetic-model",
+      updated: Date.now(),
+    };
+    await route.fulfill({ json: { saved: true } });
+  });
+  await page.goto("/?view=settings");
+  await page.getByRole("radio", { name: "Smart Mode" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "Share data with OpenAI?" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("provider security retention may still apply", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(dialog.getByRole("checkbox")).not.toBeChecked();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(decisions).toEqual([]);
+  await page.getByRole("radio", { name: "Smart Mode" }).click();
+  await dialog.getByRole("checkbox").check();
+  await dialog.getByRole("button", { name: "Approve AI sharing" }).click();
+  await expect(
+    page.getByRole("button", { name: "Revoke AI sharing" }),
+  ).toBeVisible();
+  expect(decisions).toEqual([
+    { enabled: true, scope: "metadata", version: 1, approved: true },
+  ]);
+  await page.getByRole("button", { name: "Revoke AI sharing" }).click();
+  await expect(page.getByRole("radio", { name: "Privacy Mode" })).toBeChecked();
+  expect(decisions).toEqual([
+    { enabled: true, scope: "metadata", version: 1, approved: true },
+    { enabled: false, scope: "commands", version: 1, approved: true },
+  ]);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("synthetic AI analysis asks permission for the selected message", async ({
+  page,
+}) => {
+  const fixture = await (await page.request.get("/api/state")).json();
+  fixture.settings.source = "gmail";
+  fixture.settings.privacy = "smart";
+  fixture.capabilities.ai = true;
+  fixture.aiConsent = {
+    enabled: 1,
+    version: 1,
+    scope: "metadata",
+    model: "synthetic-model",
+    updated: Date.now(),
+  };
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  await page.route("**/api/gmail/messages", (route) =>
+    route.fulfill({
+      json: {
+        messages: [
+          {
+            id: "synthetic-message",
+            metadata: {
+              sender: "offers@synthetic.example",
+              subject: "Synthetic offer",
+            },
+            classification: {
+              action: "TRASH",
+              explanation: "Synthetic safe candidate",
+            },
+          },
+        ],
+      },
+    }),
+  );
+  let analyses = 0;
+  await page.route("**/api/analyze-message", async (route) => {
+    analyses++;
+    expect(route.request().postDataJSON()).toEqual({
+      id: "synthetic-message",
+      approved: true,
+    });
+    await route.fulfill({
+      json: {
+        analysis: { recommendation: "review" },
+        explanation: "AI advice only",
+      },
+    });
+  });
+  await page.goto("/?view=assistant");
+  await page
+    .getByRole("button", { name: "Load messages", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Analyze metadata with AI" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "Send selected metadata to OpenAI?" }),
+  ).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(analyses).toBe(0);
+  await page.getByRole("button", { name: "Analyze metadata with AI" }).click();
+  await dialog
+    .getByRole("button", { name: "Send metadata for advice" })
+    .click();
+  await expect(page.locator(".analysis-result")).toContainText(
+    "AI advice only",
+  );
+  expect(analyses).toBe(1);
+  await page.unrouteAll({ behavior: "wait" });
+});

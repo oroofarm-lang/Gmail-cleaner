@@ -15,6 +15,12 @@ import { compileRule } from "@/packages/core";
 import { interpretCommand, OpenAIClassifier } from "@/packages/integrations";
 import { classify } from "@/packages/core";
 import { configureSyncSchedule } from "@/lib/gmail-scheduler";
+import {
+  aiConsent,
+  consentGuard,
+  saveAiConsent,
+  AI_CONSENT_VERSION,
+} from "@/lib/ai-consent";
 import { gmailRoute } from "@/lib/gmail-server";
 const idSchema = z.string().min(1).max(300);
 async function handle(req: Request) {
@@ -51,8 +57,10 @@ async function handle(req: Request) {
     const body = await req.json();
     if (path === "demo") {
       await db
-        .prepare("UPDATE tenants SET settings=? WHERE id=?")
-        .bind(JSON.stringify({ ...t.settings, source: "demo" }), t.id)
+        .prepare(
+          "UPDATE tenants SET settings=json_set(settings,'$.source','demo') WHERE id=?",
+        )
+        .bind(t.id)
         .run();
       await seedDemo(t.id);
       return json(
@@ -252,12 +260,6 @@ async function handle(req: Request) {
         .bind(input.id, t.id)
         .first<{ address: string }>();
       if (!g) throw new ApiError(404, "Sender unavailable.");
-      const settings = {
-        ...t.settings,
-        protectedSenders: [
-          ...new Set([...t.settings.protectedSenders, g.address]),
-        ],
-      };
       await db.batch([
         db
           .prepare(
@@ -265,8 +267,10 @@ async function handle(req: Request) {
           )
           .bind(input.id, t.id),
         db
-          .prepare("UPDATE tenants SET settings=? WHERE id=?")
-          .bind(JSON.stringify(settings), t.id),
+          .prepare(
+            "UPDATE tenants SET settings=json_insert(settings,'$.protectedSenders[#]',?) WHERE id=? AND NOT EXISTS(SELECT 1 FROM json_each(settings,'$.protectedSenders') WHERE value=?)",
+          )
+          .bind(g.address, t.id, g.address),
         db
           .prepare(
             `UPDATE messages SET classification=json_set(classification,'$.action','KEEP') WHERE tenant=? AND json_extract(metadata,'$.sender')=?`,
@@ -334,16 +338,12 @@ async function handle(req: Request) {
         )
         .run();
       if (rule.sender && rule.action === "PROTECT") {
-        const settings = {
-          ...t.settings,
-          protectedSenders: [
-            ...new Set([...t.settings.protectedSenders, rule.sender]),
-          ],
-        };
         await db.batch([
           db
-            .prepare("UPDATE tenants SET settings=? WHERE id=?")
-            .bind(JSON.stringify(settings), t.id),
+            .prepare(
+              "UPDATE tenants SET settings=json_insert(settings,'$.protectedSenders[#]',?) WHERE id=? AND NOT EXISTS(SELECT 1 FROM json_each(settings,'$.protectedSenders') WHERE value=?)",
+            )
+            .bind(rule.sender, t.id, rule.sender),
           db
             .prepare(
               "UPDATE mail_groups SET protected=1,revision=revision+1 WHERE address=? AND tenant=?",
@@ -366,6 +366,18 @@ async function handle(req: Request) {
       if (!result.meta.changes) throw new ApiError(404, "Rule unavailable.");
       return json({ updated: true });
     }
+    if (path === "ai-consent") {
+      const input = z
+        .object({
+          enabled: z.boolean(),
+          scope: z.enum(["commands", "metadata"]),
+          version: z.literal(AI_CONSENT_VERSION),
+          approved: z.literal(true),
+        })
+        .strict()
+        .parse(body);
+      return json(await saveAiConsent(t.id, input.enabled, input.scope));
+    }
     if (path === "settings") {
       const input = z
         .object({
@@ -376,14 +388,17 @@ async function handle(req: Request) {
         })
         .strict()
         .parse(body);
+      if (input.privacy === "smart") await aiConsent(t.id, "commands", false);
       if (input.autopilot === "autopilot")
         throw new ApiError(
           409,
           "Unattended Autopilot is not available until the worker schedule is configured and verified. Assisted mode prepares actions for your review.",
         );
       await db
-        .prepare("UPDATE tenants SET settings=? WHERE id=?")
-        .bind(JSON.stringify({ ...t.settings, ...input }), t.id)
+        .prepare(
+          "UPDATE tenants SET settings=json_patch(settings,?) WHERE id=? AND deleted=0",
+        )
+        .bind(JSON.stringify(input), t.id)
         .run();
       return json({ saved: true });
     }
@@ -399,11 +414,14 @@ async function handle(req: Request) {
         config("OPENAI_API_KEY") &&
         config("OPENAI_MODEL")
       ) {
+        const authorize = await consentGuard(t.id, "commands");
         try {
           interpreted = await interpretCommand(input.command, {
             apiKey: config("OPENAI_API_KEY")!,
             model: config("OPENAI_MODEL")!,
+            authorize,
           });
+          await authorize();
         } catch {
           throw new ApiError(
             503,
@@ -469,6 +487,7 @@ async function handle(req: Request) {
           403,
           "Enable Smart Mode before sending metadata to AI.",
         );
+      const authorize = await consentGuard(t.id, "metadata");
       const key = config("OPENAI_API_KEY"),
         model = config("OPENAI_MODEL");
       if (!key || !model) throw new ApiError(503, "OpenAI is not configured.");
@@ -481,10 +500,29 @@ async function handle(req: Request) {
       const result = await new OpenAIClassifier({
         apiKey: key,
         model,
+        authorize,
       }).classify({ from: m.sender, subject: m.subject, labels: m.labels });
-      const deterministic = classify(m, t.settings.protectedSenders);
+      await authorize();
+      const current = await db
+        .prepare("SELECT settings FROM tenants WHERE id=? AND deleted=0")
+        .bind(t.id)
+        .first<{ settings: string }>();
+      if (!current) throw new ApiError(409, "Account unavailable.");
+      const deterministic = classify(
+        m,
+        JSON.parse(current.settings).protectedSenders,
+      );
       return json({
-        analysis: result,
+        analysis: {
+          ...result,
+          recommendation:
+            deterministic.action === "KEEP"
+              ? "keep"
+              : deterministic.action === "REVIEW"
+                ? "review"
+                : result.recommendation,
+          protected: deterministic.action === "KEEP" || result.protected,
+        },
         policy: deterministic,
         explanation:
           "AI is advisory. Deterministic protection remains authoritative.",
@@ -512,6 +550,12 @@ async function handle(req: Request) {
           version: 1,
           exportedAt: new Date().toISOString(),
           settings: t.settings,
+          aiConsent: await db
+            .prepare(
+              "SELECT enabled,version,scope,model,updated FROM ai_consents WHERE tenant=?",
+            )
+            .bind(t.id)
+            .first(),
           syncSchedule: await db
             .prepare(
               "SELECT enabled,interval_minutes,next_due,status,last_success,last_error,failures FROM sync_schedules WHERE tenant=?",
@@ -579,6 +623,7 @@ async function handle(req: Request) {
         "sync_seen",
         "sync_pages",
         "sync_schedules",
+        "ai_consents",
       ];
       await db.batch([
         ...tables.map((table) =>
