@@ -21,21 +21,21 @@ Click **Explore a demo**. The server seeds 13 synthetic aggregate groups represe
 
 - Authenticated tenant-scoped D1 state, report, sender groups, protected mail, subscriptions.
 - Persistent demo cleanup with atomic plan claim, revision validation, idempotency, activity and Undo.
-- Conservative deterministic rules; approved sender protection; rules/preferences export and deletion controls.
-- Gmail OAuth PKCE/single-use state, AES-GCM encrypted tokens, refresh with account-bound compare-and-swap, revocation.
-- Resumable bounded Gmail inventory using body-free MIME/metadata projection, persistent page cursor and lease.
+- Conservative deterministic rules; approved sender protection; paged export of preferences, rules, inventory, plans, actions and jobs, and deletion controls.
+- Gmail OAuth starts readonly, requires explicit same-account permission upgrade for cleanup/Undo, and enforces local/token/dispatch permissions. PKCE/single-use state, AES-GCM encrypted tokens, refresh with account/generation-bound compare-and-swap, revocation and epoch-fenced cancellation of in-flight callbacks.
+- Resumable read-only Gmail full/history synchronization using body-free MIME/metadata projection, atomic inventory/cursor commits, generation-bound leases, safe history-expiry full resync, complete-sweep pruning and persistent pagination-cycle detection. UI can pause after the current page and resume or restart interrupted inventory.
 - Message-level Gmail plans, explicit approval, fresh thread/protection/MIME checks, tenant serialization, provider action ledger, conservative uncertain state and Undo.
-- Optional OpenAI Responses intent/classification adapters with strict schemas, no tools, metadata minimization and deterministic policy authority.
+- Optional OpenAI Responses adapters with operator opt-in, versioned purpose/model-bound user consent, per-message confirmation, immediate dispatch/revoke checks, minimized metadata, strict schemas, no tools and authoritative deterministic policy.
 - Minimal MV3 sidepanel dashboard companion with original icons and no mailbox credentials.
 - Keyboard, accessibility, viewport and functional regression test definitions; independent adversarial source/runtime tests.
 
 ## Deliberate limits
 
 - Real Gmail and OpenAI require owner-configured credentials and live verification. No real mailbox was used for testing.
-- Unsubscribe destinations cannot be DNS-pinned safely in this runtime; live unsubscribe is manual-required. No URL is fetched automatically.
-- Unattended Autopilot and Guardian require a verified scheduled worker and Pub/Sub integration; UI refuses to enable unsupported execution.
-- The extension currently opens authenticated dashboard actions; API pairing and current-sender intelligence are not implemented.
-- A worker crash between Gmail mutation and database confirmation yields `uncertain` or a stuck execution. The app does not blindly retry or promise recovery. Operational reconciliation needs completion before public launch.
+- Unsubscribe destinations cannot be DNS-pinned safely in this runtime; live unsubscribe provides Gmail instructions and screened, explicitly untrusted manual destinations. No URL is fetched automatically.
+- Opt-in read-only scheduled scans use native Worker cron events, bounded five-message units, tenant/account-bound leases and finite retry backoff. Host cron activation and real provider scheduling remain unverified; unattended cleanup and push monitoring stay disabled.
+- The extension defaults to a dashboard launcher. Optional pinned-origin Chrome messaging and explicit dashboard approval implement a read-only aggregate relay; live Chrome/gateway validation remains missing. Current-sender intelligence and direct mailbox API access are unavailable.
+- Lost Gmail mutation responses yield `uncertain`; explicit Undo inspects current labels, performs only reversible restoration, and verifies the result. Mutations never automatically retry. Interrupted work uses durable owner/120s leases. Activity → Check interrupted actions releases expired work without sending Gmail changes; it preserves uncertainty and requires explicit Undo. Token acquisition is followed by fresh protection and dispatch ownership checks. Deployed provider/D1 recovery remains unverified.
 - Sites/Vinext uses Vinext 1.0.1, a hosting-compatible Next.js implementation. Private deployment is owner-only; public customer ingress/authentication needs verification.
 - Large sender lists expose the largest 100 groups; report totals are computed across the entire inventory. Live message inspector paginates in batches of 50.
 

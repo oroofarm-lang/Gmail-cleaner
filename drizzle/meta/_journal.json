@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1791217141849,
+      "tag": "0000_little_chimera",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791284393832,
+      "tag": "0001_complete_weapon_omega",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791284935103,
+      "tag": "0002_spotty_bucky",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791302955374,
+      "tag": "0003_talented_talisman",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791303387254,
+      "tag": "0004_nostalgic_weapon_omega",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791354424692,
+      "tag": "0005_wise_firebird",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791354603729,
+      "tag": "0006_rainy_jack_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791355056301,
+      "tag": "0007_messy_dark_phoenix",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791373215988,
+      "tag": "0008_fancy_eternity",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791373899806,
+      "tag": "0009_familiar_enchantress",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791438486336,
+      "tag": "0010_narrow_marvel_boy",
+      "breakpoints": true
+    }
+  ]
+}

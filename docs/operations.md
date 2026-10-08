@@ -1,0 +1,49 @@
+# Operations runbook
+
+Private demo and real-mail production are distinct operational modes. Keep real provider processing disabled until OAuth consent, credentials, encryption key, permissions, audience and scheduling are verified. Configure secrets only through deployment secret storage, never committed files or browser configuration.
+
+Startup checks: valid D1 binding/migrations, expected gateway auth, selected runtime versions, safe source mode, configured scopes, provider origins and key format. OAuth failure must lead to reauthentication, not silent infinite retries. History 404 triggers controlled full resync. Watch expiry requires renewal before expiration; verify real scheduler and authenticated Pub/Sub audience before enabling.
+
+For mutation incidents pause jobs first, preserve privacy-safe correlation/action identifiers, reconcile each provider message against the action ledger, then restore only confirmed app-owned actions at the user's request. Do not rerun a bulk cleanup based on the group count. For key exposure revoke credentials, rotate keys/secrets, redeploy, invalidate affected sessions and follow the incident notification assessment with counsel. Never paste email/tokens into tickets.
+
+Public release requires a named owner and support channel, working alerts, escalation rotation, provider quota/cost ceilings, bounded job leases, documented rollback and restore evidence. None is inferred from a successful UI build. Routine checks: health/version, auth denial, job age, failed/partial actions, watch renewal age, revoked-token refresh attempts, rate limits, storage growth and purge lag.
+
+## Interrupted Gmail work
+
+Activity → Check interrupted actions invokes authenticated, tenant-scoped `POST /api/gmail/reconcile` with `{}`. Wait at least two minutes after the last operation heartbeat. Active leases are untouched. Expired pending actions become failed; attempted changes become uncertain; interrupted Undo becomes restore_uncertain; interrupted plans become partial and cannot be executed again. This endpoint does not contact Gmail and never retries cleanup. Review each uncertain action, then explicitly choose Undo if the original placement should be restored. Undo reads current labels and verifies reversible restoration.
+
+Mutation ownership is renewed after token retrieval and checked with a deadline immediately before HTTP dispatch. Fresh metadata/thread/protection checks precede cleanup dispatch. Responses lost after actual dispatch remain uncertain. Migration0002 adds owner/lease columns. During a future production upgrade, stop/drain old mutation workers before applying/enabling this implementation; workers predating these fences cannot be made safe merely by adding columns. Local crash simulations are not evidence of actual deployed D1 or provider ordering.
+
+Migrations0003–0004 add credential generations and tenant/OAuth connection epochs. Each OAuth start supersedes older pending callbacks; disconnect advances the epoch before deleting credentials and cancelling active actions. Already-consumed callbacks cannot commit after cancellation. Undo is bound to its recorded account; reconnecting a different mailbox cannot restore its message IDs. Credential refresh and final mutation dispatch are generation-bound. These SQL boundaries have synthetic actual-adapter coverage; external provider revocation and deployed runtime ordering remain unverified.
+
+## Read-only synchronization
+
+`POST /api/gmail/scan` accepts `{}` to resume or refresh and `{ "restart": true }` to abandon an interrupted cursor and restart a full inventory. Each unit fetches at most25 message projections. Initial full sync captures the current profile history ID before listing, includes Spam/Trash, then catches up history from that baseline. History pages can contain many changed IDs; the durable cursor drains25 at a time before advancing the history checkpoint. Provider404 for an individual message removes only its local metadata; history404 resets full synchronization.
+
+Full sweep markers retain prior inventory until the whole sweep completes; then stale local metadata is pruned with an indexed tenant/message/generation lookup. Scan markers and SHA256 pagination-token keys are internal working state, cleared at scan boundaries or tenant data/account deletion. Persistent cycle detection supports more than1000 valid pages without silently stopping large inventories. The worker writes inventory and cursor atomically under tenant/credential generation/lease ownership fences. No scan path sends Gmail changes. Pause lets the current bounded page finish, then stops browser-driven continuation; reopening can resume the saved cursor.
+
+References verified2026-10-07: [Google sync guidance](https://developers.google.com/workspace/gmail/api/guides/sync), [profile history ID](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile), [history pagination](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.history/list). Scheduled invocation, watch renewal and authenticated Pub/Sub remain separate implementation/live-verification gates. This sync endpoint does not establish an unattended scheduler.
+
+## Opt-in scheduled inventory
+
+Migration0007 adds schedule and global health tables. Native Worker `scheduled` events run at most three due tenants concurrently, with five message projections per unit and 120-second renewable leases. Continue incomplete inventory on a later minute; complete cycles wait the selected 15–1440-minute interval. Every provider read checks current schedule ownership and account generation. Pause, disconnect and reconnect revoke schedule ownership. Reconnect requires fresh opt-in. An already-dispatched read may finish; later reads/commits fail their fences. No scheduled cleanup is supported.
+
+The operator must package cron explicitly with `INBOX_BUILD_SYNC_CRON=true` and configure runtime `GMAIL_SYNC_SCHEDULER=enabled` plus valid Google credentials, encryption key and an HTTPS callback. Both flags default disabled. The native heartbeat must be less than15 minutes old before a user can enable scanning in Guardian. Pause remains available when the heartbeat is stale. The Sites task scheduling connector schedules separate tasks; it does not establish this Worker cron. Confirm actual host support/configuration and delivery privately before activation. No live settings were changed during implementation.
+
+Failures use only fixed codes. Transient failures back off exponentially (up to one hour); five consecutive failures pause the schedule.401/403 suspend immediately and require reconnect/re-enable. Inspect health timestamps, schedule status and processed counts without logging provider bodies or email. User-enabled schedules do not authorize mailbox mutations. History polling is implemented; Gmail Pub/Sub/watch renewal is not implemented and must not be advertised as available.
+
+`npm run test:scheduler-runtime` runs the built production handler against isolated temporary local D1 with provider secrets blank. It verifies native event dispatch and health persistence, without a mailbox. This is local runtime evidence, not deployed cron or real Gmail verification.
+
+## Gmail permission migration
+
+Drain old workers before migration0008. Existing credentials and pending OAuth transactions default to app read-only; this deliberately requires an explicit user upgrade before cleanup or Undo. Scanning and previews remain available. Settings → Allow mailbox changes → Continue to Google creates a strict, account-bound upgrade; Google approval does not approve any cleanup plan. Switching accounts during upgrade fails rather than replacing the connection. Reconnect defaults readonly and cancels scheduled consent. Actual Google consent/grant/refresh behavior still requires authorized disposable-account testing.
+
+## AI processing and consent
+
+Apply migration0009. Keep `AI_PROCESSING=disabled` until actual processor/Google-data terms, retention and hosting requirements are reviewed. Configure a server-only OpenAI key and explicit model ID, then opt in through the approved host settings flow; no live activation was done during this implementation. A model change requires fresh user consent. Settings defaults consent to commands only, with a separate checkbox for confirmed mail metadata. Each message requires its own explicit send confirmation. Revoke works even if operator configuration disappears. Already dispatched requests cannot be recalled.
+
+Consent is checked before dispatch and before returning advice. Revocation/re-grant rotate epochs; account deletion/reconnect/disconnect invalidate metadata-sharing permission. Do not log subjects, commands, tokens or model responses. AI cannot run rules, approve plans or mutate mail. Fresh deterministic KEEP/REVIEW results override model recommendations. Actual provider evaluation/retention and deployed backup/tombstone handling remain launch gates.
+
+## Read-only Chrome relay
+
+Apply migration0010. Backend relay defaultsdisabled. Package the extension with an exact HTTPS `INBOX_EXTENSION_ORIGIN`; configure backend with matching origin, installed `INBOX_EXTENSION_ID` and `INBOX_EXTENSION_RELAY=enabled` only after authorized private host/Chrome validation. This uses authenticated dashboard requests plus Chrome external messaging; no gateway bypass, bearer API, host permission or CORS relaxation. Approval/revocation preserve exact-origin JSON guards. Verify actual gateway denies direct/spoofed access before activation. No live service/extension configuration was changed by implementation.

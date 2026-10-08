@@ -1,0 +1,78 @@
+✔ actual adapter: expired cleanup cannot dispatch after reconcile, and pending action cannot Undo (23.586042ms)
+✔ actual adapter: newly starred at mutation token wait cannot dispatch or acquire Undo provenance (4.293792ms)
+✔ actual adapter: response lost enters uncertain, explicit exact Undo restores and duplicate blocked (5.5065ms)
+✔ actual adapter: disconnect without reconnect during mutation token wait suppresses Undo (4.968458ms)
+✔ actual adapter: disconnect and replacement account block captured-token Undo (4.205417ms)
+✔ actual adapter: expired Undo token completion cannot mutate after reconcile and successor Undo (5.359667ms)
+✔ actual adapter: same-account generation replacement suppresses stale Undo (4.124333ms)
+✔ actual adapter: completed action cannot restore a different connected mailbox (4.208917ms)
+✔ actual adapter: account swap between action lookup and Undo client cannot dispatch (4.193542ms)
+✔ actual adapter: consumed OAuth callback cannot reconnect after completed disconnect (3.114291ms)
+✔ actual adapter: connection replacement during final attempting CAS prevents dispatch (3.570083ms)
+✔ actual adapter: newer OAuth intent fences older callback without clearing inventory (2.690416ms)
+✔ actual adapter: deleted tenant fences consumed OAuth callback commit (2.438166ms)
+✔ actual adapter: current OAuth intent connects and rotates generation without overwriting preferences (2.751375ms)
+{"event":"api_failure","type":"Error"}
+✔ actual sync: full pages prune vanished inventory only at completion, then catch up history (9.922083ms)
+✔ actual sync: incremental additions, labels and deletions refresh current metadata without relisting (5.399792ms)
+✔ actual sync: history page over25 IDs resumes without advancing its checkpoint early (13.429833ms)
+✔ actual sync: expired history resets full scan and retains inventory until completed sweep (3.951667ms)
+✔ actual sync: failed metadata fetch commits neither new rows nor cursor (3.759541ms)
+✔ actual sync: repeated history page token fails without checkpoint advancement (5.707625ms)
+✔ actual sync: explicit restart recovers repeated cursor without deleting current inventory early (5.403417ms)
+✔ actual sync: backwards history checkpoint leaves inventory and cursor unchanged (4.168834ms)
+✔ actual sync: more than1000 valid full pages can finish and catch up history (531.098833ms)
+✔ actual sync: persistent cycle detection catches a token older than the32-token cursor window (32.575917ms)
+✔ scheduler: requires explicit consent and current worker readiness (5.155291ms)
+✔ scheduler: bounded full/history units run only reads and respect cadence (4.563208ms)
+✔ scheduler: overlapping ticks acquire one tenant lease (3.425917ms)
+✔ scheduler: pause during read releases owned work and prevents further pages (4.136584ms)
+✔ scheduler: transient errors back off then suspend after five failures without replay (5.733625ms)
+✔ scheduler: expired owner cannot overwrite successor after resumed read (3.930125ms)
+✔ scheduler: disconnect pauses consent and removes future provider access (3.091167ms)
+✔ scheduler: provider401 stops scheduling and exposes only a fixed reauth code (3.190709ms)
+✔ scheduler: stale runtime heartbeat prevents enabling scans while pause always remains available (3.146583ms)
+✔ scheduler: user cannot enable or pause another tenant schedule (3.244417ms)
+✔ scheduler: quota403 keeps consent and retries through bounded backoff (2.759084ms)
+✔ scheduler: manual scan contention defers without consuming retry budget (4.244833ms)
+✔ scheduler: permission403 still suspends and requires reauthentication (2.975291ms)
+✔ OAuth: initial connection requests read-only even if browser asks for modify (2.04425ms)
+✔ OAuth: upgrade requires explicit strict approval and a connected tenant account (3.105583ms)
+✔ OAuth: combined Google grant cannot upgrade an app read-only request (3.167167ms)
+✔ OAuth: actual read-only scope connects while wrong upgrade grant preserves old credentials (2.3265ms)
+✔ OAuth: upgrade cannot replace the connected account (2.08125ms)
+✔ OAuth: explicit same-account modify grant enables changes and invalidates schedule consent (2.532166ms)
+✔ OAuth: denied callback consumes state and cannot be replayed (2.641625ms)
+✔ OAuth: read-only credentials block Undo before provider access (3.139084ms)
+✔ OAuth: older callback account replacement prevents captured-account upgrade intent (2.48975ms)
+✔ OAuth: modify callback commit cannot overwrite a changed current account (2.216875ms)
+✔ AI: Smart Mode shortcut and operator-disabled provider cannot bypass explicit consent (3.042292ms)
+✔ AI: real adapter sends only redacted minimized metadata with strict schema and no tools (3.089542ms)
+✔ AI: command-only consent cannot authorize mail metadata or another tenant (2.301917ms)
+✔ AI: revoked consent before dispatch prevents provider request (2.2895ms)
+✔ AI: revocation during a dispatched response discards advice and blocks future sharing (2.903ms)
+✔ AI: fresh deterministic protection overrides confident trash advice (3.574709ms)
+✔ AI: model change and Privacy Mode block further dispatch; export omits internal consent epoch (4.665833ms)
+✔ AI: fresh consent cannot revive an older in-flight epoch (3.04225ms)
+✔ AI: foreign origin and forged tenant cannot approve consent (5.002792ms)
+✔ AI: Gmail reconnect and disconnect invalidate metadata sharing (2.6935ms)
+✔ companion approval is explicit, single-use, tenant-bound and read-only (8.644917ms)
+✔ companion expiry, account change, operator pin and deletion fail closed (4.142959ms)
+✔ extension has no mail access, broad permissions or remote code (3.838375ms)
+✔ dashboard configuration rejects active URL schemes and accidental credentials (0.260833ms)
+✖ relay rejects forged origins, unbounded projections and unsolicited/replayed packets (0.76775ms)
+ℹ tests 62
+ℹ suites 0
+ℹ pass 61
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1161.492417
+
+✖ failing tests:
+
+test at tests/extension.test.mjs:50:1
+✖ relay rejects forged origins, unbounded projections and unsolicited/replayed packets (0.76775ms)
+  Error: Untrusted relay
+      at file:///Users/ohadfait/Desktop/%D7%A4%D7%A8%D7%95%D7%99%D7%99%D7%A7%D7%98%D7%99%D7%9D/Mail%20Clean/inbox-agent/apps/extension/relay.js:19:49
