@@ -90,3 +90,11 @@ REC-01 remains open: encrypted local recovery and actual fail-closed deletion ho
 Current recovery verification: TypeScript, ESLint, format, security11, source-final web/default-extension builds, preview artifact gate and isolated native Worker/D1 migration check PASS. Performance100k115ms/heap76MiB. Hosted facilities remain unverified; current-commit CI will be inspected after publication.
 
 Chromium final recovery checkpoint: 12/12 E2E PASS50.4s, including axe, keyboard, reduced motion, mobile reflow and the existing consent/recovery flows. No live service configuration or mailbox operations.
+
+## Maintenance admission checkpoint — 2026-10-15 (working tree)
+
+PROGRESS: migration0012, durable atomic API/scheduler admission tickets, pause/status/resume local operator tool and recovery-mode restore lock implemented. Scheduler waits for all concurrent units to settle before releasing its ticket. Crash tickets do not expire automatically. Permanent tests cover pause/drain, stale generations, interrupted tickets, closed restored database and actual API/scheduler denial before tenant/heartbeat writes. Current core131 and security11 PASS; typecheck passed. Fresh independent review requested without inherited history; prior attempt failed on account usage limit and is not a review PASS. Hosted control transport and final restored-database admission remain engineering gaps. Goal ACTIVE/NOT READY.
+
+Efficiency policy for continuation: one implementer; bounded independent review without inherited chat; targeted checks during edits, full verification at integrated checkpoints; filter logs/JSON before returning them; reuse source-matched evidence. Preserve all required release/security gates.
+
+Admission checkpoint validation: core132/security11/typecheck/lint/web build/native Worker+D1 PASS. Independent bounded review39 checks and actual scheduler sibling-failure regression PASS. Initial E2E11/12 failed on persisted demo state; test harness now shares a unique temporary D1 directory between migration/runtime, disables existing-server reuse and cleans up afterward. Targeted failed scenario passed9.8s. Full final E2E/extension runtime will be verified by current-commit CI. No live operations; final recovery admission and hosted transport remain incomplete.

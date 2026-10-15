@@ -1,3 +1,4 @@
+import { withAdmission } from "@/packages/operations/admission";
 import { ApiError, binding, config } from "./server";
 import { clientFor, metadata, refreshGroups } from "./gmail-server";
 import { GmailScanBusy, syncGmailPage } from "./gmail-sync";
@@ -96,7 +97,7 @@ function failureCode(error: unknown): { code: string; reauth: boolean } {
   return { code: "sync_unavailable", reauth: false };
 }
 /** Trusted runtime event; bounded to three read-only units, never user cleanup rules. */
-export async function runGmailScheduler() {
+async function runAdmittedScheduler() {
   if (config("GMAIL_SYNC_SCHEDULER") !== "enabled")
     return { enabled: false, claimed: 0, completed: 0, failed: 0 };
   const db = binding();
@@ -148,7 +149,7 @@ export async function runGmailScheduler() {
   let claimed = 0,
     completed = 0,
     failed = 0;
-  await Promise.all(
+  const units = await Promise.allSettled(
     due.results.map(async ({ tenant: tenantId }) => {
       const owner = crypto.randomUUID();
       const schedule = await db
@@ -257,6 +258,8 @@ export async function runGmailScheduler() {
       }
     }),
   );
+  const rejected = units.find((unit) => unit.status === "rejected");
+  if (rejected?.status === "rejected") throw rejected.reason;
   await db
     .prepare(
       "UPDATE scheduler_health SET last_completed=? WHERE id='gmail-sync'",
@@ -264,4 +267,8 @@ export async function runGmailScheduler() {
     .bind(Date.now())
     .run();
   return { enabled: true, configured: true, claimed, completed, failed };
+}
+
+export async function runGmailScheduler() {
+  return withAdmission(binding(), "scheduler", runAdmittedScheduler);
 }

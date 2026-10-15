@@ -1847,3 +1847,45 @@ test("companion expiry, account change, operator pin and deletion fail closed", 
   );
   assert.equal((await request("extension/summary", input)).status, 403);
 });
+
+test("scheduler admission remains active until sibling settles after another claim fails", async () => {
+  await schedulerFixture();
+  sqlite.exec(
+    "INSERT INTO tenants(id,settings,created) SELECT 'B',settings,created FROM tenants WHERE id='A'; INSERT INTO credentials(tenant,encrypted,email,updated,generation,permission) SELECT 'B',encrypted,email,updated,generation,permission FROM credentials WHERE tenant='A'; INSERT INTO sync_schedules(tenant,enabled,next_due,generation,interval_minutes) SELECT 'B',enabled,0,generation,interval_minutes FROM sync_schedules WHERE tenant='A';",
+  );
+  const held = gate();
+  let claims = 0,
+    finished = false;
+  globalThis.__backend.beforeQuery = async (sql) => {
+    if (!sql.startsWith("UPDATE sync_schedules SET owner=")) return;
+    if (++claims === 1) throw Error("synthetic claim failure");
+    held.arrive();
+    await held.wait;
+    throw Error("synthetic sibling failure");
+  };
+  const tick = runGmailScheduler().then(
+    () => {
+      finished = true;
+    },
+    () => {
+      finished = true;
+    },
+  );
+  await held.entered;
+  sqlite
+    .prepare("UPDATE service_admission SET mode='paused' WHERE id='service'")
+    .run();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(finished, false);
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM active_operations").get().n,
+    1,
+  );
+  held.release();
+  await tick;
+  assert.equal(finished, true);
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM active_operations").get().n,
+    0,
+  );
+});

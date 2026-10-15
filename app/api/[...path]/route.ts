@@ -24,8 +24,12 @@ import {
 import { gmailRoute } from "@/lib/gmail-server";
 import { extensionRelay, relayConfiguration } from "@/lib/extension-relay";
 import { recordDeletion } from "@/lib/recovery-journal";
+import {
+  withAdmission,
+  AdmissionUnavailable,
+} from "@/packages/operations/admission";
 const idSchema = z.string().min(1).max(300);
-async function handle(req: Request) {
+async function handleAdmitted(req: Request) {
   try {
     const path = new URL(req.url).pathname.replace(/^\/api\//, "");
     if (path === "health")
@@ -718,6 +722,21 @@ async function handle(req: Request) {
       {
         error:
           "The action could not finish. Your mail stays safe. Please try again.",
+      },
+      503,
+    );
+  }
+}
+async function handle(req: Request) {
+  try {
+    return await withAdmission(binding(), "request", () => handleAdmitted(req));
+  } catch (error) {
+    return json(
+      {
+        error:
+          error instanceof AdmissionUnavailable
+            ? error.message
+            : "The service is unavailable. Please try again later.",
       },
       503,
     );

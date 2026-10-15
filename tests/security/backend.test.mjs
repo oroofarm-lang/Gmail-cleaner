@@ -217,6 +217,7 @@ async function harness() {
   synthetic("zod", { z });
   synthetic("@/packages/integrations", integrations);
   const files = {
+    "@/packages/operations/admission": "packages/operations/admission.ts",
     "@/lib/server": "lib/server.ts",
     "./server": "lib/server.ts",
     "./gmail-sync": "lib/gmail-sync.ts",

@@ -180,3 +180,16 @@ export const extensionDevices = sqliteTable(
   },
   (t) => [index("extension_devices_tenant").on(t.tenant, t.expires)],
 );
+
+export const serviceAdmission = sqliteTable("service_admission", {
+  id: text("id").primaryKey(),
+  mode: text("mode").notNull(),
+  generation: integer("generation").notNull().default(0),
+  updated: integer("updated").notNull(),
+});
+export const activeOperations = sqliteTable("active_operations", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(),
+  started: integer("started").notNull(),
+  generation: integer("generation").notNull(),
+});

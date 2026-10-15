@@ -100,6 +100,9 @@ export async function restoreSnapshot(
     db = new DatabaseSync(target);
     for (const { sql } of schema.migrations) db.exec(sql);
     db.exec("BEGIN");
+    db.prepare(
+      "UPDATE service_admission SET mode='recovery',generation=generation+1,updated=? WHERE id='service'",
+    ).run(now);
     for (const [table, columns] of Object.entries(TABLE_COLUMNS)) {
       const insert = db.prepare(
         `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`,

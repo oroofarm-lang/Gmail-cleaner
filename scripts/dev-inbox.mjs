@@ -11,7 +11,7 @@ const migration = spawnSync(
     "--config",
     "wrangler.local.jsonc",
     "--persist-to",
-    ".wrangler/state",
+    process.env.INBOX_LOCAL_STATE ?? ".wrangler/state",
   ],
   { stdio: "inherit", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } },
 );

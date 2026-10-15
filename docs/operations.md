@@ -47,3 +47,20 @@ Consent is checked before dispatch and before returning advice. Revocation/re-gr
 ## Read-only Chrome relay
 
 Apply migration0010. Backend relay defaultsdisabled. Package the extension with an exact HTTPS `INBOX_EXTENSION_ORIGIN`; configure backend with matching origin, installed `INBOX_EXTENSION_ID` and `INBOX_EXTENSION_RELAY=enabled` only after authorized private host/Chrome validation. This uses authenticated dashboard requests plus Chrome external messaging; no gateway bypass, bearer API, host permission or CORS relaxation. Approval/revocation preserve exact-origin JSON guards. Verify actual gateway denies direct/spoofed access before activation. No live service/extension configuration was changed by implementation.
+
+## Maintenance admission and drain
+
+Migration0012 adds `service_admission` and `active_operations`. Every application API request and scheduler event atomically obtains a random durable ticket only while admission is `open`. Missing tables/state or paused/recovery mode fail closed. Existing admitted work may finish; maintenance is drained only after its tickets are released. Scheduler units use `Promise.allSettled` so one failed unit cannot release the event ticket while another still runs. Tickets contain only random ID, kind, timestamp and generation; no identity, mail or credentials.
+
+For a local SQLite database, operator commands are:
+
+```sh
+node scripts/maintenance.mjs status /private/source.sqlite
+node scripts/maintenance.mjs pause /private/source.sqlite 0
+node scripts/maintenance.mjs status /private/source.sqlite
+node scripts/maintenance.mjs resume /private/source.sqlite 1
+```
+
+Use the actual generation returned by status, not the illustrative0/1 values. Pause/resume use an immediate transaction and reject stale generations. Pause prevents new work; wait for `drained:true` before collecting the authoritative journal or cutting over recovery. Resume is allowed only for an ordinary paused database with zero active operations. An interrupted worker leaves a ticket indefinitely; age is not completion evidence. There is no automatic ticket purge or command to clear tickets. Investigate and prove the old worker has terminated before an authorized operator repairs such state. Old application versions do not honor this gate; stop/drain them before relying on it.
+
+The restore tool always creates `recovery` mode with no copied tickets. Ordinary resume cannot reopen that database. Final recovery admission still requires authoritative journal/cutover verification, tenant/authentication checks and a separately implemented operator workflow. The local commands do not control hosted D1; hosted command transport and deployed drain behavior remain UNVERIFIED. Static pages/assets remain available, but application API data and scheduled processing are gated. A maintenance503 is not proof that previously admitted operations have finished.

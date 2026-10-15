@@ -1176,3 +1176,21 @@ test("competing data generation prevents stale deletion from purging newly writt
     1,
   );
 });
+
+test("maintenance blocks actual API and scheduler admission before tenant or heartbeat writes", async () => {
+  sqlite
+    .prepare("UPDATE service_admission SET mode='paused' WHERE id='service'")
+    .run();
+  assert.equal((await request("demo", {})).status, 503);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM tenants").get().n, 0);
+  const { runGmailScheduler } = await import("../../lib/gmail-scheduler.ts");
+  await assert.rejects(runGmailScheduler());
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM scheduler_health").get().n,
+    0,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM active_operations").get().n,
+    0,
+  );
+});
