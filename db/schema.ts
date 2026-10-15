@@ -40,7 +40,10 @@ export const plans = sqliteTable(
     owner: text("owner"),
     lease: integer("lease").notNull().default(0),
   },
-  (t) => [index("plans_tenant").on(t.tenant, t.created)],
+  (t) => [
+    index("plans_tenant").on(t.tenant, t.created),
+    index("plans_expiry").on(t.expires, t.id),
+  ],
 );
 export const actions = sqliteTable(
   "actions",
@@ -56,7 +59,10 @@ export const actions = sqliteTable(
     owner: text("owner"),
     lease: integer("lease").notNull().default(0),
   },
-  (t) => [index("actions_tenant").on(t.tenant, t.created)],
+  (t) => [
+    index("actions_tenant").on(t.tenant, t.created),
+    index("actions_plan").on(t.planId),
+  ],
 );
 export const rules = sqliteTable(
   "rules",
@@ -79,15 +85,19 @@ export const credentials = sqliteTable("credentials", {
   generation: text("generation").notNull().default("legacy"),
   updated: integer("updated").notNull(),
 });
-export const oauth = sqliteTable("oauth_transactions", {
-  state: text("state").primaryKey(),
-  tenant: text("tenant").notNull(),
-  verifier: text("verifier").notNull(),
-  requestedScope: text("requested_scope").notNull().default("readonly"),
-  accountEmail: text("account_email"),
-  expires: integer("expires").notNull(),
-  epoch: integer("epoch").notNull().default(0),
-});
+export const oauth = sqliteTable(
+  "oauth_transactions",
+  {
+    state: text("state").primaryKey(),
+    tenant: text("tenant").notNull(),
+    verifier: text("verifier").notNull(),
+    requestedScope: text("requested_scope").notNull().default("readonly"),
+    accountEmail: text("account_email"),
+    expires: integer("expires").notNull(),
+    epoch: integer("epoch").notNull().default(0),
+  },
+  (t) => [index("oauth_expiry").on(t.expires, t.state)],
+);
 export const jobs = sqliteTable(
   "jobs",
   {
@@ -178,7 +188,10 @@ export const extensionDevices = sqliteTable(
     created: integer("created").notNull(),
     expires: integer("expires").notNull(),
   },
-  (t) => [index("extension_devices_tenant").on(t.tenant, t.expires)],
+  (t) => [
+    index("extension_devices_tenant").on(t.tenant, t.expires),
+    index("extension_devices_expiry").on(t.expires, t.id),
+  ],
 );
 
 export const serviceAdmission = sqliteTable("service_admission", {
@@ -192,4 +205,18 @@ export const activeOperations = sqliteTable("active_operations", {
   kind: text("kind").notNull(),
   started: integer("started").notNull(),
   generation: integer("generation").notNull(),
+});
+
+export const retentionHealth = sqliteTable("retention_health", {
+  id: text("id").primaryKey(),
+  lastStarted: integer("last_started").notNull(),
+  lastCompleted: integer("last_completed"),
+  status: text("status").notNull(),
+});
+
+export const retentionCursors = sqliteTable("retention_cursors", {
+  id: text("id").primaryKey(),
+  expires: integer("expires").notNull(),
+  rowId: text("row_id").notNull(),
+  revision: text("revision").notNull(),
 });

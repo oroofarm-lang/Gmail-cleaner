@@ -38,6 +38,7 @@ test(
     config.assets = { directory: path.join(root, "dist/client") };
     config.vars = {
       GMAIL_SYNC_SCHEDULER: "enabled",
+      INBOX_RETENTION: "enabled",
       GOOGLE_CLIENT_ID: "",
       GOOGLE_CLIENT_SECRET: "",
       GOOGLE_REDIRECT_URI: "",
@@ -66,6 +67,20 @@ test(
         process.execPath,
         [cli, "d1", "migrations", "apply", dbName, ...local],
         { cwd: work, env, timeout: 30000 },
+      );
+      await execute(
+        process.execPath,
+        [
+          cli,
+          "d1",
+          "execute",
+          dbName,
+          ...local,
+          "--command",
+          "INSERT INTO oauth_transactions(state,tenant,verifier,expires) VALUES('synthetic-expired','synthetic','synthetic',1)",
+          "--json",
+        ],
+        { cwd: work, env, timeout: 15000 },
       );
       const reservation = createServer();
       await new Promise((resolve) =>
@@ -114,7 +129,7 @@ test(
       );
       assert.equal(response.status, 200, await response.text());
       const query =
-        "SELECT last_tick,(SELECT COUNT(*) FROM credentials) credentials,(SELECT COUNT(*) FROM sync_schedules) schedules FROM scheduler_health WHERE id='gmail-sync'";
+        "SELECT last_tick,(SELECT COUNT(*) FROM credentials) credentials,(SELECT COUNT(*) FROM sync_schedules) schedules,(SELECT COUNT(*) FROM oauth_transactions) expired,(SELECT status FROM retention_health WHERE id='ephemeral') retention FROM scheduler_health WHERE id='gmail-sync'";
       const result = await execute(
         process.execPath,
         [cli, "d1", "execute", dbName, ...local, "--command", query, "--json"],
@@ -125,6 +140,8 @@ test(
       assert.ok(Date.now() - rows[0].last_tick < 30000);
       assert.equal(rows[0].credentials, 0);
       assert.equal(rows[0].schedules, 0);
+      assert.equal(rows[0].expired, 0);
+      assert.equal(rows[0].retention, "completed");
     } finally {
       if (server && server.exitCode === null) {
         server.kill("SIGTERM");

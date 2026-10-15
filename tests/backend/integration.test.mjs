@@ -1194,3 +1194,34 @@ test("maintenance blocks actual API and scheduler admission before tenant or hea
     0,
   );
 });
+
+test("retention requires operator opt-in and respects maintenance admission", async () => {
+  const { runRetention } = await import("../../lib/retention.ts");
+  delete globalThis.__backend.env.INBOX_RETENTION;
+  assert.deepEqual(await runRetention(), { enabled: false });
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM retention_health").get().n,
+    0,
+  );
+  globalThis.__backend.env.INBOX_RETENTION = "enabled";
+  try {
+    sqlite.exec(
+      "INSERT INTO oauth_transactions(state,tenant,verifier,expires) VALUES('old','A','synthetic',1)",
+    );
+    assert.equal((await runRetention()).oauth, 1);
+    assert.equal(
+      sqlite.prepare("SELECT status FROM retention_health").get().status,
+      "completed",
+    );
+    sqlite.exec(
+      "UPDATE service_admission SET mode='paused' WHERE id='service'; INSERT INTO oauth_transactions(state,tenant,verifier,expires) VALUES('held','A','synthetic',1)",
+    );
+    await assert.rejects(runRetention());
+    assert.equal(
+      sqlite.prepare("SELECT COUNT(*) n FROM oauth_transactions").get().n,
+      1,
+    );
+  } finally {
+    delete globalThis.__backend.env.INBOX_RETENTION;
+  }
+});

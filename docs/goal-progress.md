@@ -98,3 +98,11 @@ PROGRESS: migration0012, durable atomic API/scheduler admission tickets, pause/s
 Efficiency policy for continuation: one implementer; bounded independent review without inherited chat; targeted checks during edits, full verification at integrated checkpoints; filter logs/JSON before returning them; reuse source-matched evidence. Preserve all required release/security gates.
 
 Admission checkpoint validation: core132/security11/typecheck/lint/web build/native Worker+D1 PASS. Independent bounded review39 checks and actual scheduler sibling-failure regression PASS. Initial E2E11/12 failed on persisted demo state; test harness now shares a unique temporary D1 directory between migration/runtime, disables existing-server reuse and cleans up afterward. Targeted failed scenario passed9.8s. Full final E2E/extension runtime will be verified by current-commit CI. No live operations; final recovery admission and hosted transport remain incomplete.
+
+## Ephemeral retention checkpoint — 2026-10-15 (working tree)
+
+PROGRESS: operator opt-in scheduled expiry purge, bounded100 per OAuth/unused-plan/device table, transactional retries, indexes for expiry/action references and fixed aggregate health state. No action ledger, uncertain/Undo evidence, mail, credential, consent, recovery receipt or drain-ticket purge. Maintenance admission applies; Worker waits for all scheduled subsystems. Focused37 cases PASS. Actual built Worker+D1 verification, source-final checks and independent bounded review in progress. Broad metadata/action/log/backup retention and hosted cron/alerts remain open; no public SLA or live service activation. Goal ACTIVE/NOT READY.
+
+Retention source-final core136/security11/types/web build PASS. Independent bounded review/retest PASS; original scan-cost note corrected with composite indexed keyset window and CAS cursor, and retention documentation updated. Provider/host activation remains unverified. No full UI rerun locally because UI is unchanged; current-commit CI will verify the integrated runtime/UI.
+
+Native built Worker retention+D1 integration PASS: expired synthetic OAuth state physically removed and retention completion recorded, without credentials/mailbox. Local final format/lint PASS; awaiting publication and current-head CI.

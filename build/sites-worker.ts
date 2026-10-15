@@ -1,3 +1,4 @@
+import { runRetention } from "../lib/retention";
 import { runGmailScheduler } from "../lib/gmail-scheduler";
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
@@ -9,7 +10,16 @@ export default {
     _env: Cloudflare.Env,
     ctx: ExecutionContext,
   ) {
-    ctx.waitUntil(runGmailScheduler().then(() => undefined));
+    ctx.waitUntil(
+      (async () => {
+        const results = await Promise.allSettled([
+          runGmailScheduler(),
+          runRetention(),
+        ]);
+        if (results.some((result) => result.status === "rejected"))
+          throw Error("Scheduled processing failed.");
+      })(),
+    );
   },
   fetch(
     request: Request,
