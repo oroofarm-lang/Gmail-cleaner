@@ -6,6 +6,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import ts from "typescript";
+import { recoveryFixture } from "../fixtures/recovery.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const authSource =
   "export async function getChatGPTUser(){return globalThis.__backend.user}";
@@ -123,7 +124,7 @@ CREATE TABLE credentials(tenant TEXT PRIMARY KEY,encrypted TEXT NOT NULL,email T
 CREATE TABLE oauth_transactions(state TEXT PRIMARY KEY,tenant TEXT NOT NULL,verifier TEXT NOT NULL,expires INTEGER NOT NULL);
 CREATE TABLE jobs(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,cursor TEXT,processed INTEGER NOT NULL,status TEXT NOT NULL,history_id TEXT,updated INTEGER NOT NULL,lease INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE messages(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,gmail_id TEXT NOT NULL,metadata TEXT NOT NULL,classification TEXT NOT NULL,updated INTEGER NOT NULL);`;
-beforeEach(() => {
+beforeEach(async () => {
   delete globalThis.__backend.env.INBOX_EXTENSION_RELAY;
   delete globalThis.__backend.env.INBOX_EXTENSION_ID;
   delete globalThis.__backend.env.INBOX_EXTENSION_ORIGIN;
@@ -152,6 +153,7 @@ beforeEach(() => {
     GOOGLE_CLIENT_SECRET: "test-secret",
     TOKEN_ENCRYPTION_KEY: "test-key",
   });
+  Object.assign(globalThis.__backend.env, await recoveryFixture());
   globalThis.__backend.user = { userId: "A", email: "a@example.com" };
 });
 async function request(endpoint, body, tenant = "A", options = {}) {

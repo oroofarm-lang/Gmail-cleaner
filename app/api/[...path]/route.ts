@@ -23,6 +23,7 @@ import {
 } from "@/lib/ai-consent";
 import { gmailRoute } from "@/lib/gmail-server";
 import { extensionRelay, relayConfiguration } from "@/lib/extension-relay";
+import { recordDeletion } from "@/lib/recovery-journal";
 const idSchema = z.string().min(1).max(300);
 async function handle(req: Request) {
   try {
@@ -654,6 +655,10 @@ async function handle(req: Request) {
           409,
           "Disconnect Gmail first so Google access is revoked before deleting local data.",
         );
+      const generation = await recordDeletion(
+        t.id,
+        path === "delete-account" ? "account" : "data",
+      );
       const tables = [
         "mail_groups",
         "plans",
@@ -668,20 +673,31 @@ async function handle(req: Request) {
         "ai_consents",
         "extension_devices",
       ];
-      await db.batch([
+      const deleted = await db.batch([
         ...tables.map((table) =>
-          db.prepare(`DELETE FROM ${table} WHERE tenant=?`).bind(t.id),
+          db
+            .prepare(
+              `DELETE FROM ${table} WHERE tenant=? AND EXISTS(SELECT 1 FROM tenants WHERE id=? AND data_epoch=? AND deleted=0) AND NOT EXISTS(SELECT 1 FROM credentials WHERE tenant=?)`,
+            )
+            .bind(t.id, t.id, generation, t.id),
         ),
         db
           .prepare(
-            "UPDATE tenants SET settings=?,deleted=?,connection_epoch=connection_epoch+1 WHERE id=?",
+            "UPDATE tenants SET settings=?,deleted=?,connection_epoch=connection_epoch+1,data_epoch=data_epoch+1 WHERE id=? AND data_epoch=? AND deleted=0 AND NOT EXISTS(SELECT 1 FROM credentials WHERE tenant=?)",
           )
           .bind(
             JSON.stringify(DEFAULT_SETTINGS),
             Number(path === "delete-account"),
             t.id,
+            generation,
+            t.id,
           ),
       ]);
+      if (!deleted.at(-1)?.meta.changes)
+        throw new ApiError(
+          409,
+          "Data changed or Gmail reconnected during deletion. Disconnect if necessary, then review and confirm a new deletion.",
+        );
       return json({ deleted: true });
     }
     throw new ApiError(404, "This action is unavailable.");

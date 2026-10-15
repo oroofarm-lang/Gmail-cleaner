@@ -1,0 +1,1 @@
+ALTER TABLE `tenants` ADD `data_epoch` integer DEFAULT 0 NOT NULL;

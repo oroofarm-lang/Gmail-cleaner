@@ -5,6 +5,7 @@ export const tenants = sqliteTable("tenants", {
   created: integer("created").notNull(),
   deleted: integer("deleted").notNull().default(0),
   connectionEpoch: integer("connection_epoch").notNull().default(0),
+  dataEpoch: integer("data_epoch").notNull().default(0),
 });
 export const groups = sqliteTable(
   "mail_groups",

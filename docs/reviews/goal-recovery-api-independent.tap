@@ -1,0 +1,41 @@
+✔ exact demo cleanup SQL revalidates protection/revision; stale claim mutates nothing (22.659958ms)
+✔ exact demo transaction handles duplicate execution and duplicate Undo once (5.473583ms)
+✔ cross-tenant plans, groups, rules, messages and actions are inaccessible (6.955583ms)
+✔ tenant forgery in request JSON rejected and absent identity denied (4.030417ms)
+✔ actual Gmail handler revalidates a newly protected sender (6.05325ms)
+✔ actual Gmail handler protects replied thread and changed starred labels (4.595ms)
+✔ actual Gmail cleanup duplicates are skipped and Undo restores Inbox (5.46675ms)
+✔ actual Gmail execution rejects metadata changed after preview (4.144042ms)
+✔ overlapping Gmail plans cannot mutate the same tenant concurrently (56.493125ms)
+✔ missing Gmail credentials cannot strand Undo in restoring state (4.463792ms)
+✔ account switch during cleanup aborts before mutation (3.909542ms)
+✔ OAuth state belongs to tenant, is single-use, and account replacement clears old inventory (4.411334ms)
+✔ account deletion clears only owned data and prevents silent tenant recreation (5.361292ms)
+✔ received multi-message conversations are protected before cleanup (3.783208ms)
+✔ in-flight scan cannot commit old-account metadata after replacement (6.03725ms)
+✔ simultaneous first scans acquire only one provider lease (106.058417ms)
+✔ disconnect removes local credentials even when OAuth configuration is missing (4.840333ms)
+✔ expired scan owner cannot write inventory or release its successor lease (3.82875ms)
+✔ lost cleanup response remains recoverable without replaying trash (5.362167ms)
+✔ privacy export is complete, paginated, tenant scoped and excludes credentials (8.093417ms)
+✔ lost Undo response can be safely retried after inspecting current labels (6.073458ms)
+✔ manual unsubscribe returns scoped options without provider calls or automatic success (5.343625ms)
+✔ failed preflight never gives Undo authority over a later manual user change (4.509167ms)
+✔ expired interrupted execution is released without replaying mutations (3.72875ms)
+✔ reconciliation cannot release active leases or another tenant's work (3.72ms)
+✔ expired restoration becomes explicitly recoverable without automatic provider calls (4.406583ms)
+✔ stale execution owner cannot mutate after a successor takes its lease (4.193084ms)
+✔ pending preflight crash never acquires Undo authority during reconciliation (6.418541ms)
+✔ late token completion cannot dispatch expired cleanup after reconciliation (5.824542ms)
+✔ fresh dispatch protection after token wait is preserved and has no Undo provenance (7.665292ms)
+✔ local deletion fails closed when independent journal is absent or cannot persist (3.871709ms)
+✔ reconnection during receipt persistence aborts every deletion in the atomic batch (3.886042ms)
+✔ competing data generation prevents stale deletion from purging newly written data (4.00775ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 703.383667

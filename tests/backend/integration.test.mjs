@@ -6,6 +6,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import ts from "typescript";
+import { recoveryFixture } from "../fixtures/recovery.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const authSource =
   "export async function getChatGPTUser(){return globalThis.__backend.user}";
@@ -119,7 +120,7 @@ CREATE TABLE credentials(tenant TEXT PRIMARY KEY,encrypted TEXT NOT NULL,email T
 CREATE TABLE oauth_transactions(state TEXT PRIMARY KEY,tenant TEXT NOT NULL,verifier TEXT NOT NULL,expires INTEGER NOT NULL);
 CREATE TABLE jobs(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,source TEXT NOT NULL,cursor TEXT,processed INTEGER NOT NULL,status TEXT NOT NULL,history_id TEXT,updated INTEGER NOT NULL,lease INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE messages(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,gmail_id TEXT NOT NULL,metadata TEXT NOT NULL,classification TEXT NOT NULL,updated INTEGER NOT NULL);`;
-beforeEach(() => {
+beforeEach(async () => {
   globalThis.__backend.beforeQuery = null;
   sqlite?.close();
   sqlite = new DatabaseSync(":memory:");
@@ -136,6 +137,7 @@ beforeEach(() => {
     GOOGLE_CLIENT_SECRET: "test-secret",
     TOKEN_ENCRYPTION_KEY: "test-key",
   });
+  Object.assign(globalThis.__backend.env, await recoveryFixture());
   globalThis.__backend.user = { userId: "A", email: "a@example.com" };
 });
 async function request(endpoint, body, tenant = "A", options = {}) {
@@ -1071,5 +1073,106 @@ test("fresh dispatch protection after token wait is preserved and has no Undo pr
   assert.equal(
     (await request("gmail/undo", { actionId: action.id })).status,
     409,
+  );
+});
+
+test("local deletion fails closed when independent journal is absent or cannot persist", async () => {
+  await demo("A");
+  const before = sqlite
+    .prepare("SELECT COUNT(*) n FROM mail_groups WHERE tenant='A'")
+    .get().n;
+  const store = globalThis.__backend.env.RECOVERY_JOURNAL;
+  delete globalThis.__backend.env.RECOVERY_JOURNAL;
+  assert.equal(
+    (await request("delete-data", { confirmation: "DELETE" })).status,
+    503,
+  );
+  globalThis.__backend.env.RECOVERY_JOURNAL = {
+    ...store,
+    put: async () => {
+      throw Error("synthetic storage outage");
+    },
+  };
+  assert.equal(
+    (await request("delete-data", { confirmation: "DELETE" })).status,
+    503,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM mail_groups WHERE tenant='A'").get()
+      .n,
+    before,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT data_epoch FROM tenants WHERE id='A'").get()
+      .data_epoch,
+    0,
+  );
+});
+test("reconnection during receipt persistence aborts every deletion in the atomic batch", async () => {
+  await demo("A");
+  const store = globalThis.__backend.env.RECOVERY_JOURNAL;
+  globalThis.__backend.env.RECOVERY_JOURNAL = {
+    ...store,
+    async put(k, v) {
+      const result = await store.put(k, v);
+      sqlite
+        .prepare(
+          "INSERT INTO credentials(tenant,encrypted,email,updated) VALUES('A','synthetic','a@example.com',1)",
+        )
+        .run();
+      return result;
+    },
+  };
+  const before = sqlite
+    .prepare("SELECT COUNT(*) n FROM mail_groups WHERE tenant='A'")
+    .get().n;
+  assert.equal(
+    (await request("delete-account", { confirmation: "DELETE" })).status,
+    409,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM mail_groups WHERE tenant='A'").get()
+      .n,
+    before,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT deleted FROM tenants WHERE id='A'").get().deleted,
+    0,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT data_epoch FROM tenants WHERE id='A'").get()
+      .data_epoch,
+    0,
+  );
+});
+test("competing data generation prevents stale deletion from purging newly written data", async () => {
+  await demo("A");
+  const store = globalThis.__backend.env.RECOVERY_JOURNAL;
+  globalThis.__backend.env.RECOVERY_JOURNAL = {
+    ...store,
+    async put(k, v) {
+      const result = await store.put(k, v);
+      sqlite
+        .prepare("UPDATE tenants SET data_epoch=data_epoch+1 WHERE id='A'")
+        .run();
+      return result;
+    },
+  };
+  const before = sqlite
+    .prepare("SELECT COUNT(*) n FROM mail_groups WHERE tenant='A'")
+    .get().n;
+  assert.equal(
+    (await request("delete-data", { confirmation: "DELETE" })).status,
+    409,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT COUNT(*) n FROM mail_groups WHERE tenant='A'").get()
+      .n,
+    before,
+  );
+  assert.equal(
+    sqlite.prepare("SELECT data_epoch FROM tenants WHERE id='A'").get()
+      .data_epoch,
+    1,
   );
 });

@@ -1,0 +1,11 @@
+✔ encrypted isolated restore reapplies account/data erasure and never restores provider authority or queued work (57.471708ms)
+✔ wrong key/tamper/purpose/namespace/version/stale or missing journal fail before a target exists (39.878958ms)
+✔ malformed/orphan snapshot cannot create a target and existing targets are never overwritten (61.55775ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 252.451167
