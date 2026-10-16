@@ -1,0 +1,18 @@
+(node:20414) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual API rejects unauthenticated requests and foreign-origin mutations (154.461417ms)
+✔ actual API scopes state, preview, actions and rule IDs to authenticated tenant (67.387083ms)
+✔ actual API rejects plan tampering and revokes stale demo preview when protections change (65.847667ms)
+✔ actual Gmail execution skips fresh starred, attachment and replied-thread protections (173.334708ms)
+✔ actual Gmail plan replay causes one provider mutation and preserves tenant access (51.488375ms)
+✔ actual OAuth callback consumes state once and rejects another tenant (55.672875ms)
+✔ actual disconnect removes local credentials even when provider revocation fails (54.048417ms)
+✔ actual credential refresh cannot overwrite a concurrently reconnected Gmail account (42.615792ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 919.136167

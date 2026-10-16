@@ -1,0 +1,1 @@
+ALTER TABLE `credentials` ADD `generation` text DEFAULT 'legacy' NOT NULL;

@@ -1,0 +1,35 @@
+{"scenario":"receipt-before-snapshot-before-purge","restoredMessages":1}
+✖ PRIVACY: receipt written before purge must also erase a snapshot captured between the two writes (47.041875ms)
+{"scenario":"large-inventory","rows":20001,"elapsedMs":465,"ciphertextCharacters":3917790}
+✔ 20,001-message inventory preserves row count and restores with 0600 permissions (518.147959ms)
+✔ 1,005 receipts require multiple pages; missing, duplicate and cycling listings fail closed (334.24ms)
+✔ authenticated payload tamper fails before target; invalid settings cleanup removes target; existing files/symlinks stay intact (38.962833ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1037.758667
+
+✖ failing tests:
+
+test at docs/reviews/goal-recovery-independent-probes.mjs:31:1
+✖ PRIVACY: receipt written before purge must also erase a snapshot captured between the two writes (47.041875ms)
+  AssertionError [ERR_ASSERTION]: A completed deletion must not resurrect in recovery
+  
+  1 !== 0
+  
+      at file:///Users/ohadfait/Desktop/%D7%A4%D7%A8%D7%95%D7%99%D7%99%D7%A7%D7%98%D7%99%D7%9D/Mail%20Clean/inbox-agent/docs/reviews/goal-recovery-independent-probes.mjs:47:12
+      at async withFixture (file:///Users/ohadfait/Desktop/%D7%A4%D7%A8%D7%95%D7%99%D7%99%D7%A7%D7%98%D7%99%D7%9D/Mail%20Clean/inbox-agent/docs/reviews/goal-recovery-independent-probes.mjs:29:9)
+      at async TestContext.<anonymous> (file:///Users/ohadfait/Desktop/%D7%A4%D7%A8%D7%95%D7%99%D7%99%D7%A7%D7%98%D7%99%D7%9D/Mail%20Clean/inbox-agent/docs/reviews/goal-recovery-independent-probes.mjs:32:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

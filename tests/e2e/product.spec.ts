@@ -1,0 +1,724 @@
+import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+test.beforeEach(async ({ page }) => {
+  await page.goto("/");
+  const signIn = page.getByRole("link", { name: "Sign in", exact: true });
+  const demo = page.getByRole("button", {
+    name: "Explore a demo",
+    exact: true,
+  });
+  const demoMode = page.getByText("DEMO MODE", { exact: true });
+  // Wait for API-backed onboarding before inspecting state; main exists during loading.
+  await expect(signIn.or(demo).or(demoMode).first()).toBeVisible();
+  if (await signIn.isVisible()) {
+    await signIn.click();
+    await expect(demo.or(demoMode).first()).toBeVisible();
+  }
+  if (await demo.isVisible()) await demo.click();
+  await expect(demoMode).toBeVisible();
+  await expect(page.locator(".hero-number")).toBeVisible();
+  if ((await page.locator("html").getAttribute("data-theme")) === "dark") {
+    await page
+      .getByRole("button", { name: "Toggle light and dark appearance" })
+      .click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  }
+});
+test("review, Trash, idempotent backend and Undo preserve the demo", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Deep clean", exact: false }).click();
+  const row = page.locator(".mail-row").filter({ hasText: "Studio Supply" });
+  await row.getByRole("checkbox").check();
+  await page
+    .getByRole("button", { name: "Review cleanup", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("dialog")).toContainText("Studio Supply");
+  await page
+    .getByRole("button", { name: "Approve & move to Trash", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.getByRole("status")).toContainText("moved to Trash");
+  await page
+    .getByRole("button", { name: "Activity & undo", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Undo", exact: true }).first().click();
+  await expect(page.getByRole("status")).toContainText("restored");
+  await page.getByRole("button", { name: "Deep clean", exact: false }).click();
+  await expect(row).toBeVisible();
+});
+test("assistant and approved deterministic rules persist", async ({ page }) => {
+  await page
+    .getByRole("button", { name: "Your inbox agent", exact: true })
+    .click();
+  await page
+    .getByLabel("Ask your inbox agent")
+    .fill("Delete promotions older than 6 months");
+  await page.getByRole("button", { name: "Send command", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "A rule, ready for your review." }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Approve this rule", exact: true })
+    .click();
+  await expect(page.locator(".rule-list")).toContainText(
+    "Delete promotions older than 6 months",
+  );
+  await page.reload();
+  await expect(page.locator(".rule-list")).toContainText(
+    "Delete promotions older than 6 months",
+  );
+});
+test("accessibility critical screens, dialog keyboard and reduced motion", async ({
+  page,
+}) => {
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark") {
+      await page
+        .getByRole("button", { name: "Toggle light and dark appearance" })
+        .click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    }
+    for (const view of [
+      "Inbox report",
+      "Deep clean",
+      "Subscriptions",
+      "Protected mail",
+      "Your inbox agent",
+      "Rules & autopilot",
+      "Inbox guardian",
+      "Activity & undo",
+      "Settings & privacy",
+    ]) {
+      await page.getByRole("button", { name: view, exact: false }).click();
+      const result = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+        .analyze();
+      expect(result.violations, JSON.stringify(result.violations)).toEqual([]);
+    }
+  }
+  await page.getByRole("button", { name: "Deep clean", exact: false }).click();
+  await page.locator(".row-checkbox:enabled").first().check();
+  await page
+    .getByRole("button", { name: "Review cleanup", exact: true })
+    .click();
+  for (let step = 0; step < 12; step++) {
+    await page.keyboard.press("Tab");
+    expect(
+      await page
+        .locator("dialog")
+        .evaluate((d) => d.contains(document.activeElement)),
+    ).toBe(true);
+  }
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(
+    await page
+      .locator(".sidebar")
+      .evaluate((el) => getComputedStyle(el).transitionDuration),
+  ).toBe("0s");
+});
+test("visual responsive matrix does not overflow and keeps essential content", async ({
+  page,
+}) => {
+  for (const size of [
+    { width: 1600, height: 1000 },
+    { width: 1280, height: 850 },
+    { width: 768, height: 1024 },
+    { width: 390, height: 844 },
+    { width: 320, height: 700 },
+  ]) {
+    await page.setViewportSize(size);
+    await page.goto("/?view=report");
+    await expect(page.locator(".hero-number")).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: `test-results/report-${size.width}.png`,
+      fullPage: true,
+    });
+  }
+  await page.goto("/?view=settings");
+  await page
+    .getByRole("combobox", { name: "Appearance", exact: true })
+    .selectOption("dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  const result = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(result.violations).toEqual([]);
+  await page.screenshot({
+    path: "test-results/settings-dark.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("combobox", { name: "Appearance", exact: true })
+    .selectOption("light");
+});
+
+test("mobile accessibility, hidden navigation focus and all-screen reflow", async ({
+  page,
+}) => {
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const view of [
+      "report",
+      "deep-clean",
+      "subscriptions",
+      "protected",
+      "assistant",
+      "rules",
+      "guardian",
+      "activity",
+      "settings",
+    ]) {
+      await page.goto(`/?view=${view}`);
+      await expect(page.locator("main h1")).toBeVisible();
+      const result = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+        .analyze();
+      expect(
+        result.violations,
+        JSON.stringify({ width, view, violations: result.violations }),
+      ).toEqual([]);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+        `${view} at ${width}px`,
+      ).toBe(true);
+      await page.screenshot({
+        path: `test-results/${view}-${width}.png`,
+        fullPage: true,
+      });
+    }
+    await page.goto("/?view=report");
+    await expect(page.locator(".hero-number")).toBeVisible();
+    for (let step = 0; step < 12; step++) {
+      await page.keyboard.press("Tab");
+      expect(
+        await page.evaluate(
+          () => !!document.activeElement?.closest(".sidebar"),
+        ),
+      ).toBe(false);
+    }
+    await page
+      .getByRole("button", { name: "Open navigation", exact: true })
+      .focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Close navigation", exact: true }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await page
+      .getByRole("navigation")
+      .getByRole("button", { name: "Deep clean" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Open navigation", exact: true }),
+    ).toHaveAttribute("aria-expanded", "false");
+  }
+});
+
+test("synthetic live-mode accessibility for manual unsubscribe and interrupted recovery", async ({
+  page,
+}) => {
+  // UI-only fixtures; actual tenant/provider behavior is covered by SQLite route tests.
+  const writes: string[] = [];
+  await page.route("**/api/state", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    data.settings.source = "gmail";
+    data.connection = { email: "synthetic-mailbox@example.com" };
+    data.activity = [
+      {
+        id: "synthetic-uncertain",
+        kind: "trash",
+        status: "uncertain",
+        created: Date.now(),
+        data: {},
+      },
+    ];
+    await route.fulfill({ json: data });
+  });
+  const destination =
+    "https://newsletter.example.com/unsubscribe?token=" + "a".repeat(1200);
+  await page.route("**/api/gmail/unsubscribe-options", async (route) => {
+    writes.push("manual-options");
+    await route.fulfill({
+      json: {
+        reason: "No automatic unsubscribe request has been sent.",
+        sender: "newsletter@example.com",
+        account: "synthetic-mailbox@example.com",
+        gmailUrl: "https://mail.google.com/mail/",
+        search: "from:newsletter@example.com",
+        candidates: [{ kind: "https", url: destination }],
+        sent: false,
+      },
+    });
+  });
+  await page.route("**/api/gmail/reconcile", async (route) => {
+    writes.push("reconcile");
+    await route.fulfill({ json: { actions: 1, plans: 1, replayed: false } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?view=subscriptions");
+  await page
+    .getByRole("button", { name: "Unsubscribe", exact: false })
+    .first()
+    .click();
+  await page
+    .getByRole("button", { name: "Review manual options", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("link", { name: "Open Gmail" }),
+  ).toHaveAttribute("href", "https://mail.google.com/mail/");
+  await expect(
+    dialog.getByText("These destinations come from untrusted email headers.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("link", { name: destination, exact: true }),
+  ).toHaveAttribute("rel", "noopener noreferrer");
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.getByRole("button", { name: "Close confirmation" }).click();
+  await page.goto("/?view=activity");
+  await expect(
+    page.getByText("Message uncertain: review recovery status", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Check interrupted actions", exact: true })
+    .click();
+  await expect(
+    page.getByText("Interrupted work checked.", { exact: false }),
+  ).toBeVisible();
+  expect(writes).toEqual(["manual-options", "reconcile"]);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("synthetic live scan pauses after one page and can resume", async ({
+  page,
+}) => {
+  const response = await page.request.get("/api/state");
+  const fixture = await response.json();
+  fixture.settings.source = "gmail";
+  fixture.connection = { email: "synthetic-mailbox@example.com" };
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  await page.route("**/api/gmail/scan", async (route) => {
+    calls++;
+    if (calls === 1) await gate;
+    await route.fulfill({
+      json: { processed: 25 * calls, complete: calls > 1 },
+    });
+  });
+  await page.goto("/?view=report");
+  await expect(
+    page.getByText("GMAIL CONNECTED", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Scan again", exact: true }).click();
+  await page.getByRole("button", { name: "Pause scan", exact: false }).click();
+  release();
+  await expect(
+    page.getByText("Scan paused after the current page.", { exact: false }),
+  ).toBeVisible();
+  expect(calls).toBe(1);
+  await page.getByRole("button", { name: "Scan again", exact: true }).click();
+  await expect(
+    page.getByText("Scan finished. Your report is ready.", { exact: true }),
+  ).toBeVisible();
+  expect(calls).toBe(2);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("synthetic scheduled-scan consent and pause keep cleanup approval explicit", async ({
+  page,
+}) => {
+  const response = await page.request.get("/api/state");
+  const fixture = await response.json();
+  fixture.settings.source = "gmail";
+  fixture.connection = { email: "synthetic-mailbox@example.com" };
+  fixture.capabilities.scheduledSync = true;
+  fixture.syncSchedule = null;
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  const choices: { enabled: boolean; intervalMinutes: number }[] = [];
+  await page.route("**/api/gmail/schedule", async (route) => {
+    const body = route.request().postDataJSON();
+    choices.push(body);
+    fixture.syncSchedule = {
+      enabled: Number(body.enabled),
+      interval_minutes: body.intervalMinutes,
+      status: body.enabled ? "waiting" : "paused",
+      next_due: Date.now(),
+      last_success: null,
+      last_error: null,
+      failures: 0,
+    };
+    await route.fulfill({
+      json: { enabled: body.enabled, intervalMinutes: body.intervalMinutes },
+    });
+  });
+  await page.goto("/?view=guardian");
+  await expect(
+    page.getByText("Every mailbox change still needs your approval.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await page.getByLabel("Scan frequency").selectOption("15");
+  await page
+    .getByRole("button", { name: "Enable read-only scans", exact: true })
+    .click();
+  await expect(
+    page.getByText("Read-only scheduled scans enabled", { exact: true }),
+  ).toBeVisible();
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await page
+    .getByRole("button", { name: "Pause scheduled scans", exact: true })
+    .click();
+  await expect(
+    page.getByText("Scheduled scans are off", { exact: true }),
+  ).toBeVisible();
+  expect(choices).toEqual([
+    { enabled: true, intervalMinutes: 15 },
+    { enabled: false, intervalMinutes: 15 },
+  ]);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("synthetic read-only connection requires an explicit Google permission upgrade", async ({
+  page,
+}) => {
+  const response = await page.request.get("/api/state");
+  const fixture = await response.json();
+  fixture.settings.source = "gmail";
+  fixture.connection = {
+    email: "synthetic@gmail.example",
+    permission: "readonly",
+  };
+  fixture.capabilities.gmailOAuth = true;
+  let upgrades = 0;
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  await page.route("**/api/oauth/upgrade", async (route) => {
+    upgrades++;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ approved: true });
+    await route.fulfill({
+      json: {
+        authorizationUrl:
+          "https://accounts.google.com/o/oauth2/v2/auth?synthetic=1",
+      },
+    });
+  });
+  await page.route("https://accounts.google.com/**", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<title>Synthetic Google consent</title><p>Intercepted; no Google connection.</p>",
+    }),
+  );
+  await page.goto("/?view=settings");
+  await expect(
+    page.getByText("read-only scans and previews", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Allow mailbox changes" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "Allow Gmail mailbox changes?" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("This does not approve cleanup.", { exact: false }),
+  ).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(upgrades).toBe(0);
+  await page.getByRole("button", { name: "Allow mailbox changes" }).click();
+  await dialog.getByRole("button", { name: "Continue to Google" }).click();
+  await expect(page).toHaveTitle("Synthetic Google consent");
+  expect(upgrades).toBe(1);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("synthetic AI sharing requires disclosed scope and can be revoked", async ({
+  page,
+}) => {
+  const response = await page.request.get("/api/state"),
+    fixture = await response.json();
+  fixture.capabilities.ai = true;
+  fixture.settings.privacy = "privacy";
+  fixture.aiConsent = null;
+  const decisions: unknown[] = [];
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  await page.route("**/api/ai-consent", async (route) => {
+    const decision = route.request().postDataJSON();
+    decisions.push(decision);
+    fixture.settings.privacy = decision.enabled ? "smart" : "privacy";
+    fixture.aiConsent = {
+      enabled: Number(decision.enabled),
+      scope: decision.scope,
+      version: 1,
+      model: "synthetic-model",
+      updated: Date.now(),
+    };
+    await route.fulfill({ json: { saved: true } });
+  });
+  await page.goto("/?view=settings");
+  await page.getByRole("radio", { name: "Smart Mode" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "Share data with OpenAI?" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("provider security retention may still apply", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(dialog.getByRole("checkbox")).not.toBeChecked();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(decisions).toEqual([]);
+  await page.getByRole("radio", { name: "Smart Mode" }).click();
+  await dialog.getByRole("checkbox").check();
+  await dialog.getByRole("button", { name: "Approve AI sharing" }).click();
+  await expect(
+    page.getByRole("button", { name: "Revoke AI sharing" }),
+  ).toBeVisible();
+  expect(decisions).toEqual([
+    { enabled: true, scope: "metadata", version: 1, approved: true },
+  ]);
+  await page.getByRole("button", { name: "Revoke AI sharing" }).click();
+  await expect(page.getByRole("radio", { name: "Privacy Mode" })).toBeChecked();
+  expect(decisions).toEqual([
+    { enabled: true, scope: "metadata", version: 1, approved: true },
+    { enabled: false, scope: "commands", version: 1, approved: true },
+  ]);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("synthetic AI analysis asks permission for the selected message", async ({
+  page,
+}) => {
+  const fixture = await (await page.request.get("/api/state")).json();
+  fixture.settings.source = "gmail";
+  fixture.settings.privacy = "smart";
+  fixture.capabilities.ai = true;
+  fixture.aiConsent = {
+    enabled: 1,
+    version: 1,
+    scope: "metadata",
+    model: "synthetic-model",
+    updated: Date.now(),
+  };
+  await page.route("**/api/state", (route) => route.fulfill({ json: fixture }));
+  await page.route("**/api/gmail/messages", (route) =>
+    route.fulfill({
+      json: {
+        messages: [
+          {
+            id: "synthetic-message",
+            metadata: {
+              sender: "offers@synthetic.example",
+              subject: "Synthetic offer",
+            },
+            classification: {
+              action: "TRASH",
+              explanation: "Synthetic safe candidate",
+            },
+          },
+        ],
+      },
+    }),
+  );
+  let analyses = 0;
+  await page.route("**/api/analyze-message", async (route) => {
+    analyses++;
+    expect(route.request().postDataJSON()).toEqual({
+      id: "synthetic-message",
+      approved: true,
+    });
+    await route.fulfill({
+      json: {
+        analysis: { recommendation: "review" },
+        explanation: "AI advice only",
+      },
+    });
+  });
+  await page.goto("/?view=assistant");
+  await page
+    .getByRole("button", { name: "Load messages", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Analyze metadata with AI" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "Send selected metadata to OpenAI?" }),
+  ).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(analyses).toBe(0);
+  await page.getByRole("button", { name: "Analyze metadata with AI" }).click();
+  await dialog
+    .getByRole("button", { name: "Send metadata for advice" })
+    .click();
+  await expect(page.locator(".analysis-result")).toContainText(
+    "AI advice only",
+  );
+  expect(analyses).toBe(1);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("synthetic companion sharing needs approval, supports cancel and recovers revoked state", async ({
+  page,
+}) => {
+  const id = "867a5094-73ba-42ee-a41b-54a0f217ba6b",
+    nonce = "1".repeat(64);
+  await page.addInitScript(
+    ({ id, nonce }) => {
+      let paired = false;
+      (window as unknown as { chrome: unknown }).chrome = {
+        runtime: {
+          sendMessage(
+            _id: string,
+            payload: { kind: string },
+            callback: (result: unknown) => void,
+          ) {
+            if (payload.kind === "hello") callback({ id, nonce, paired });
+            else if (payload.kind === "reset") {
+              paired = false;
+              callback({ reset: true });
+            } else {
+              paired = true;
+              callback({ received: true });
+            }
+          },
+        },
+      };
+    },
+    { id, nonce },
+  );
+  let approved = false,
+    revoked = false,
+    starts = 0;
+  await page.route("**/api/extension", (route) =>
+    route.fulfill({
+      json: {
+        enabled: true,
+        extensionId: "a".repeat(32),
+        devices: approved
+          ? [
+              {
+                id,
+                status: "active",
+                created: Date.now(),
+                expires: Date.now() + 1e6,
+              },
+            ]
+          : [],
+      },
+    }),
+  );
+  await page.route("**/api/extension/*", async (route) => {
+    const operation = new URL(route.request().url()).pathname.split("/").at(-1);
+    if (operation === "start") {
+      starts++;
+      await route.fulfill({ json: { id } });
+    } else if (operation === "approve") {
+      expect(route.request().postDataJSON().approved).toBe(true);
+      approved = true;
+      revoked = false;
+      await route.fulfill({ json: { approved: true } });
+    } else if (operation === "revoke") {
+      approved = false;
+      revoked = true;
+      await route.fulfill({ json: { revoked: true } });
+    } else if (operation === "summary")
+      await route.fulfill({
+        status: revoked ? 403 : 200,
+        json: revoked
+          ? { error: "Companion approval revoked." }
+          : {
+              version: 1,
+              issued: Date.now(),
+              expires: Date.now() + 120000,
+              source: "demo",
+              connected: false,
+              total: 100,
+              protected: 50,
+              actions: 2,
+            },
+      });
+  });
+  await page.goto("/?view=settings");
+  const section = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Chrome companion", exact: true }),
+  });
+  await section
+    .getByRole("button", { name: "Connect or refresh companion", exact: true })
+    .click();
+  await expect(
+    section.getByRole("group", { name: "Confirm companion sharing" }),
+  ).toBeVisible();
+  expect(approved).toBe(false);
+  await section
+    .getByRole("button", { name: "Cancel pairing", exact: true })
+    .click();
+  await expect(section.getByRole("group")).toHaveCount(0);
+  await section
+    .getByRole("button", { name: "Connect or refresh companion", exact: true })
+    .click();
+  await section
+    .getByRole("button", { name: "Approve read-only sharing", exact: true })
+    .click();
+  await expect(section).toContainText("Summary sent.");
+  expect(approved).toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await section
+    .getByRole("button", {
+      name: `Revoke device ${id.slice(0, 8)}`,
+      exact: true,
+    })
+    .click();
+  await section
+    .getByRole("button", { name: "Connect or refresh companion", exact: true })
+    .click();
+  await expect(
+    section.getByRole("button", {
+      name: "Start new companion approval",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await section
+    .getByRole("button", { name: "Start new companion approval", exact: true })
+    .click();
+  await expect(
+    section.getByRole("group", { name: "Confirm companion sharing" }),
+  ).toBeVisible();
+  expect(approved).toBe(false);
+  expect(starts).toBe(3);
+});

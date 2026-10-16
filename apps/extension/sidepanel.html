@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Inbox Agent companion</title><link rel="stylesheet" href="sidepanel.css"></head>
+<body>
+<header><img src="mark.svg" width="36" height="36" alt=""><span>INBOX AGENT<small>DASHBOARD COMPANION</small></span><span class="version">01</span></header>
+<main>
+<p class="eyebrow">A LITTLE SPACE. A CLEARER INBOX.</p><h1>Good mail.<br>Less noise.</h1><p class="lede">Your inbox deserves a little breathing room.</p>
+<section class="status" aria-labelledby="connection-heading"><span class="dot" aria-hidden="true"></span><h2 id="connection-heading">Connection pending</h2><p>This companion opens your dashboard. Gmail pairing and mailbox actions are not available in this extension.</p></section>
+<form id="configuration"><label for="dashboard-url">Your dashboard URL</label><input id="dashboard-url" type="url" autocomplete="off" placeholder="https://your-dashboard.example" required aria-describedby="url-help"><p id="url-help">Paste the HTTPS address of your deployed Inbox Agent dashboard. This address is saved only on this device.</p><button type="submit">Save dashboard address <span aria-hidden="true">↗</span></button></form>
+<p id="notice" role="status" aria-live="polite"></p>
+<p id="summary" role="status" aria-live="polite"></p><a id="companion-link" hidden target="_blank" rel="noopener noreferrer">Connect or refresh in dashboard ↗</a>
+<nav aria-label="Dashboard shortcuts"><a id="dashboard-link" hidden target="_blank" rel="noopener noreferrer">Open dashboard <span aria-hidden="true">↗</span></a><a id="review-link" hidden target="_blank" rel="noopener noreferrer">Review cleanup <span aria-hidden="true">↗</span></a><a id="activity-link" hidden target="_blank" rel="noopener noreferrer">View activity <span aria-hidden="true">↗</span></a></nav>
+<button id="forget-companion" class="quiet" type="button" hidden>Forget companion approval on this device</button>
+<button id="forget" class="quiet" type="button" hidden>Forget dashboard address</button>
+<aside><strong>You stay in control.</strong><p>No inbox scraping. Approved aggregate counts and a device challenge stay on this device until forgotten, replaced or uninstalled. Summaries stop displaying after two minutes. Cleanup and undo happen in your authenticated dashboard.</p></aside>
+</main><footer>LESS CLUTTER. MORE CLARITY.<span aria-hidden="true">✳</span></footer>
+<script src="sidepanel.js" type="module"></script></body></html>

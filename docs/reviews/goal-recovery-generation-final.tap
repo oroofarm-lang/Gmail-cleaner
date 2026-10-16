@@ -1,0 +1,19 @@
+{"scenario":"receipt-before-snapshot-before-purge","restoredMessages":0}
+✔ PRIVACY: receipt written before purge must also erase a snapshot captured between the two writes (56.457459ms)
+{"scenario":"large-inventory","rows":20001,"elapsedMs":467,"ciphertextCharacters":3917810}
+✔ 20,001-message inventory preserves row count and restores with 0600 permissions (525.769125ms)
+✔ 1,005 receipts require multiple pages; missing, duplicate and cycling listings fail closed (418.578208ms)
+✔ authenticated payload tamper fails before target; invalid settings cleanup removes target; existing files/symlinks stay intact (64.158416ms)
+✔ new post-purge generation survives historical data receipt while account receipt remains terminal (71.71425ms)
+✔ missing/uninitialized/wrong-key journal and failed durable receipt writes reject (1.710791ms)
+{"scenario":"multiple-deletions-then-old-snapshot-then-new-data","restoredGeneration":2,"restoredNewMessages":1}
+✔ restored generation must advance beyond every already-applied deletion generation (66.812917ms)
+✔ unadvanceable receipt generation rejects before creating any restore target (29.112125ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1341.297959

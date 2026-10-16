@@ -1,0 +1,15 @@
+✔ independent SQL boundary: synthetic tenant/source separation, hashed secret, authorization invalidation (8.613125ms)
+✔ independent local boundary: untrusted senders rejected and simultaneous replay serialized (3.705666ms)
+✔ confirmed original recovery defect: paired local hello survives server epoch invalidation (2.483625ms)
+✔ expired local projection is hidden but remains stored until Forget: retention disclosure must distinguish these (2.019917ms)
+✔ retest: explicit nonce-bound reset rotates challenge and requires fresh approval after invalidation (2.956166ms)
+✔ retest: exact pending/active challenge start is idempotent while wrong secret and epoch fail (2.5005ms)
+✔ independent SQL expiry/limit/deletion boundaries fail closed (2.91525ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 247.927792

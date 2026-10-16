@@ -1,0 +1,31 @@
+{"scenario":"multiple-deletions-then-old-snapshot-then-new-data","restoredGeneration":1,"restoredNewMessages":0}
+✖ restored generation must advance beyond every already-applied deletion generation (69.428625ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 156.335333
+
+✖ failing tests:
+
+test at docs/reviews/goal-recovery-generation-floor-probe.mjs:140:1
+✖ restored generation must advance beyond every already-applied deletion generation (69.428625ms)
+  AssertionError [ERR_ASSERTION]: New data after recovery must survive receipts already applied to that recovery
+  
+  0 !== 1
+  
+      at file:///Users/ohadfait/Desktop/%D7%A4%D7%A8%D7%95%D7%99%D7%99%D7%A7%D7%98%D7%99%D7%9D/Mail%20Clean/inbox-agent/docs/reviews/goal-recovery-generation-floor-probe.mjs:159:9
+      at async withFixture (file:///Users/ohadfait/Desktop/%D7%A4%D7%A8%D7%95%D7%99%D7%99%D7%A7%D7%98%D7%99%D7%9D/Mail%20Clean/inbox-agent/docs/reviews/goal-recovery-generation-floor-probe.mjs:29:9)
+      at async TestContext.<anonymous> (file:///Users/ohadfait/Desktop/%D7%A4%D7%A8%D7%95%D7%99%D7%99%D7%A7%D7%98%D7%99%D7%9D/Mail%20Clean/inbox-agent/docs/reviews/goal-recovery-generation-floor-probe.mjs:141:2)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

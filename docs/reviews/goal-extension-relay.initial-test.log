@@ -1,0 +1,12 @@
+✔ independent SQL boundary: synthetic tenant/source separation, hashed secret, authorization invalidation (8.739666ms)
+✔ independent local boundary: untrusted senders rejected and simultaneous replay serialized (4.597333ms)
+✔ confirmed original recovery defect: paired local hello survives server epoch invalidation (2.478667ms)
+✔ expired local projection is hidden but remains stored until Forget: retention disclosure must distinguish these (2.030167ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 238.977625

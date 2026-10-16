@@ -1,0 +1,86 @@
+# Operations runbook
+
+Private demo and real-mail production are distinct operational modes. Keep real provider processing disabled until OAuth consent, credentials, encryption key, permissions, audience and scheduling are verified. Configure secrets only through deployment secret storage, never committed files or browser configuration.
+
+Startup checks: valid D1 binding/migrations, expected gateway auth, selected runtime versions, safe source mode, configured scopes, provider origins and key format. OAuth failure must lead to reauthentication, not silent infinite retries. History 404 triggers controlled full resync. Watch expiry requires renewal before expiration; verify real scheduler and authenticated Pub/Sub audience before enabling.
+
+For mutation incidents pause jobs first, preserve privacy-safe correlation/action identifiers, reconcile each provider message against the action ledger, then restore only confirmed app-owned actions at the user's request. Do not rerun a bulk cleanup based on the group count. For key exposure revoke credentials, rotate keys/secrets, redeploy, invalidate affected sessions and follow the incident notification assessment with counsel. Never paste email/tokens into tickets.
+
+Public release requires a named owner and support channel, working alerts, escalation rotation, provider quota/cost ceilings, bounded job leases, documented rollback and restore evidence. None is inferred from a successful UI build. Routine checks: health/version, auth denial, job age, failed/partial actions, watch renewal age, revoked-token refresh attempts, rate limits, storage growth and purge lag.
+
+## Interrupted Gmail work
+
+Activity → Check interrupted actions invokes authenticated, tenant-scoped `POST /api/gmail/reconcile` with `{}`. Wait at least two minutes after the last operation heartbeat. Active leases are untouched. Expired pending actions become failed; attempted changes become uncertain; interrupted Undo becomes restore_uncertain; interrupted plans become partial and cannot be executed again. This endpoint does not contact Gmail and never retries cleanup. Review each uncertain action, then explicitly choose Undo if the original placement should be restored. Undo reads current labels and verifies reversible restoration.
+
+Mutation ownership is renewed after token retrieval and checked with a deadline immediately before HTTP dispatch. Fresh metadata/thread/protection checks precede cleanup dispatch. Responses lost after actual dispatch remain uncertain. Migration0002 adds owner/lease columns. During a future production upgrade, stop/drain old mutation workers before applying/enabling this implementation; workers predating these fences cannot be made safe merely by adding columns. Local crash simulations are not evidence of actual deployed D1 or provider ordering.
+
+Migrations0003–0004 add credential generations and tenant/OAuth connection epochs. Each OAuth start supersedes older pending callbacks; disconnect advances the epoch before deleting credentials and cancelling active actions. Already-consumed callbacks cannot commit after cancellation. Undo is bound to its recorded account; reconnecting a different mailbox cannot restore its message IDs. Credential refresh and final mutation dispatch are generation-bound. These SQL boundaries have synthetic actual-adapter coverage; external provider revocation and deployed runtime ordering remain unverified.
+
+## Read-only synchronization
+
+`POST /api/gmail/scan` accepts `{}` to resume or refresh and `{ "restart": true }` to abandon an interrupted cursor and restart a full inventory. Each unit fetches at most25 message projections. Initial full sync captures the current profile history ID before listing, includes Spam/Trash, then catches up history from that baseline. History pages can contain many changed IDs; the durable cursor drains25 at a time before advancing the history checkpoint. Provider404 for an individual message removes only its local metadata; history404 resets full synchronization.
+
+Full sweep markers retain prior inventory until the whole sweep completes; then stale local metadata is pruned with an indexed tenant/message/generation lookup. Scan markers and SHA256 pagination-token keys are internal working state, cleared at scan boundaries or tenant data/account deletion. Persistent cycle detection supports more than1000 valid pages without silently stopping large inventories. The worker writes inventory and cursor atomically under tenant/credential generation/lease ownership fences. No scan path sends Gmail changes. Pause lets the current bounded page finish, then stops browser-driven continuation; reopening can resume the saved cursor.
+
+References verified2026-10-07: [Google sync guidance](https://developers.google.com/workspace/gmail/api/guides/sync), [profile history ID](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile), [history pagination](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.history/list). Scheduled invocation, watch renewal and authenticated Pub/Sub remain separate implementation/live-verification gates. This sync endpoint does not establish an unattended scheduler.
+
+## Opt-in scheduled inventory
+
+Migration0007 adds schedule and global health tables. Native Worker `scheduled` events run at most three due tenants concurrently, with five message projections per unit and 120-second renewable leases. Continue incomplete inventory on a later minute; complete cycles wait the selected 15–1440-minute interval. Every provider read checks current schedule ownership and account generation. Pause, disconnect and reconnect revoke schedule ownership. Reconnect requires fresh opt-in. An already-dispatched read may finish; later reads/commits fail their fences. No scheduled cleanup is supported.
+
+The operator must package cron explicitly with `INBOX_BUILD_SYNC_CRON=true` and configure runtime `GMAIL_SYNC_SCHEDULER=enabled` plus valid Google credentials, encryption key and an HTTPS callback. Both flags default disabled. The native heartbeat must be less than15 minutes old before a user can enable scanning in Guardian. Pause remains available when the heartbeat is stale. The Sites task scheduling connector schedules separate tasks; it does not establish this Worker cron. Confirm actual host support/configuration and delivery privately before activation. No live settings were changed during implementation.
+
+Failures use only fixed codes. Transient failures back off exponentially (up to one hour); five consecutive failures pause the schedule.401/403 suspend immediately and require reconnect/re-enable. Inspect health timestamps, schedule status and processed counts without logging provider bodies or email. User-enabled schedules do not authorize mailbox mutations. History polling is implemented; Gmail Pub/Sub/watch renewal is not implemented and must not be advertised as available.
+
+`npm run test:scheduler-runtime` runs the built production handler against isolated temporary local D1 with provider secrets blank. It verifies native event dispatch and health persistence, without a mailbox. This is local runtime evidence, not deployed cron or real Gmail verification.
+
+## Gmail permission migration
+
+Drain old workers before migration0008. Existing credentials and pending OAuth transactions default to app read-only; this deliberately requires an explicit user upgrade before cleanup or Undo. Scanning and previews remain available. Settings → Allow mailbox changes → Continue to Google creates a strict, account-bound upgrade; Google approval does not approve any cleanup plan. Switching accounts during upgrade fails rather than replacing the connection. Reconnect defaults readonly and cancels scheduled consent. Actual Google consent/grant/refresh behavior still requires authorized disposable-account testing.
+
+## AI processing and consent
+
+Apply migration0009. Keep `AI_PROCESSING=disabled` until actual processor/Google-data terms, retention and hosting requirements are reviewed. Configure a server-only OpenAI key and explicit model ID, then opt in through the approved host settings flow; no live activation was done during this implementation. A model change requires fresh user consent. Settings defaults consent to commands only, with a separate checkbox for confirmed mail metadata. Each message requires its own explicit send confirmation. Revoke works even if operator configuration disappears. Already dispatched requests cannot be recalled.
+
+Consent is checked before dispatch and before returning advice. Revocation/re-grant rotate epochs; account deletion/reconnect/disconnect invalidate metadata-sharing permission. Do not log subjects, commands, tokens or model responses. AI cannot run rules, approve plans or mutate mail. Fresh deterministic KEEP/REVIEW results override model recommendations. Actual provider evaluation/retention and deployed backup/tombstone handling remain launch gates.
+
+## Read-only Chrome relay
+
+Apply migration0010. Backend relay defaultsdisabled. Package the extension with an exact HTTPS `INBOX_EXTENSION_ORIGIN`; configure backend with matching origin, installed `INBOX_EXTENSION_ID` and `INBOX_EXTENSION_RELAY=enabled` only after authorized private host/Chrome validation. This uses authenticated dashboard requests plus Chrome external messaging; no gateway bypass, bearer API, host permission or CORS relaxation. Approval/revocation preserve exact-origin JSON guards. Verify actual gateway denies direct/spoofed access before activation. No live service/extension configuration was changed by implementation.
+
+## Maintenance admission and drain
+
+Migration0012 adds `service_admission` and `active_operations`. Every application API request and scheduler event atomically obtains a random durable ticket only while admission is `open`. Missing tables/state or paused/recovery mode fail closed. Existing admitted work may finish; maintenance is drained only after its tickets are released. Scheduler units use `Promise.allSettled` so one failed unit cannot release the event ticket while another still runs. Tickets contain only random ID, kind, timestamp and generation; no identity, mail or credentials.
+
+For a local SQLite database, operator commands are:
+
+```sh
+node scripts/maintenance.mjs status /private/source.sqlite
+node scripts/maintenance.mjs pause /private/source.sqlite 0
+node scripts/maintenance.mjs status /private/source.sqlite
+node scripts/maintenance.mjs resume /private/source.sqlite 1
+```
+
+Use the actual generation returned by status, not the illustrative0/1 values. Pause/resume use an immediate transaction and reject stale generations. Pause prevents new work; wait for `drained:true` before collecting the authoritative journal or cutting over recovery. Resume is allowed only for an ordinary paused database with zero active operations. An interrupted worker leaves a ticket indefinitely; age is not completion evidence. There is no automatic ticket purge or command to clear tickets. Investigate and prove the old worker has terminated before an authorized operator repairs such state. Old application versions do not honor this gate; stop/drain them before relying on it.
+
+The restore tool always creates `recovery` mode with no copied tickets. Ordinary resume cannot reopen that database. Final recovery admission still requires authoritative journal/cutover verification, tenant/authentication checks and a separately implemented operator workflow. The local commands do not control hosted D1; hosted command transport and deployed drain behavior remain UNVERIFIED. Static pages/assets remain available, but application API data and scheduled processing are gated. A maintenance503 is not proof that previously admitted operations have finished.
+
+## Bounded ephemeral retention
+
+Migration0013 adds expiry/plan-reference indexes and privacy-safe `retention_health`. `INBOX_RETENTION=enabled` opts the native scheduled handler into purging at most100 expired OAuth transactions and100 expired extension devices per invocation, and examining at most100 expired plans through an indexed keyset window. Only inactive unreferenced plans in that window are deleted. Defaultdisabled. Native cron packaging/delivery must be configured and verified separately (the existing `INBOX_BUILD_SYNC_CRON=true` packaging flag supplies minute events). Retention can run while Gmail scheduling is disabled; it never contacts providers.
+
+Deletes run in one transactional D1 batch. Expiry is checked by the executing SQL, so a renewed device is retained. Plans with action references, executing/unknown statuses or current leases are retained. Actions, Undo evidence, uncertain operations, messages, credentials, consents, rules, recovery receipts and admission tickets are not timed out by this job. A durable CAS-protected cursor advances past preserved plans and wraps at the end so these records cannot starve later eligible plans. Expiry/ID composite indexes avoid sorting complete tied-expiry collections. Partial failure rolls back the deletion/cursor batch; repeat invocation is safe. Maintenance admission covers the whole job, and the Worker waits for both scheduled subsystems even if one fails. Aggregate counts and fixed completion status contain no tenant/mail/secret values.
+
+Monitor `retention_health` status/last completion privately and compare invocation frequency against backlog. The100-row limit is per table per invocation, not a guarantee of maximum deletion latency. No production cron activation or purge has been performed. Connected metadata, action/log retention, independent-store expiry and backup deletion still need owner-approved periods, separate implementation/verification and hosted operational evidence; this job does not fulfill those broader commitments.
+
+## Aggregate monitoring and health
+
+`GET /api/health` checks database access plus recovery/retention schema prerequisites through normal maintenance admission. Its `scope:application-database` and `providerVerification:not_assessed` deliberately do not certify Gmail, AI, gateway ingress or release readiness. Missing schema, failed database calls or maintenance return503; no provider requests or configuration values are returned.
+
+`GET /api/operations/status` is disabled until the operator privately configures exact `INBOX_OPERATOR_USER_ID` matching a verified gateway identity. Ordinary authenticated users receive403; anonymous requests401. This server-only role must be provisioned through an authorized host change and only after actual gateway/direct-origin denial tests. Never use a query parameter, browser header or email string as authorization. The implementation trusts the existing gateway identity contract; synthetic role tests do not prove the deployed contract.
+
+The endpoint returns only fixed issue codes, scheduler/retention freshness booleans, and aggregate counters capped at100 with a capped flag. It includes uncertain actions, expired mutation ownership requiring investigation, active admission tickets and expired ephemeral-record backlog. Expired plan counts include preserved plans and are not a count of records eligible for purge. Scheduler completion and heartbeat must both be recent; future/missing/stale timestamps fail the enabled subsystem's check. Disabled subsystems are shown explicitly. Overall `ok` means no issue in these bounded checks; `releaseReadiness:not_assessed` preserves all other launch gates. No IDs, addresses, message data, credentials, exception names or provider responses are returned. Status itself holds an admission ticket, included in the active counter.
+
+Application API failures, admission infrastructure failures and native scheduled failures emit only allowlisted event code, random incident UUID, timestamp and schema version. Error objects/names/messages and request/tenant content are not accepted by the event serializer. API failures return the incident UUID for support correlation. Expected maintenance denials do not emit failure events. This does not sanitize framework/platform logs outside these application boundaries; inspect provider logging controls separately.
+
+Configure a private external monitor and alert sink only through an authorized deployment change. Probe health and the protected status endpoint; alert on attention/staleness/failed requests and verify a synthetic delivery/acknowledgment. No external alert destination or delivery has been configured/tested. Aggregate output is monitoring input, not evidence that paging, log expiry, gateway authentication or production recovery is working.
