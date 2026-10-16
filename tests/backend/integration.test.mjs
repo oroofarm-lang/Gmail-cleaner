@@ -1225,3 +1225,53 @@ test("retention requires operator opt-in and respects maintenance admission", as
     delete globalThis.__backend.env.INBOX_RETENTION;
   }
 });
+
+test("aggregate operations endpoint is disabled by default and requires exact operator identity", async () => {
+  delete globalThis.__backend.env.INBOX_OPERATOR_USER_ID;
+  assert.equal(
+    (await request("operations/status", undefined, null)).status,
+    401,
+  );
+  assert.equal(
+    (await request("operations/status", undefined, "A")).status,
+    403,
+  );
+  globalThis.__backend.env.INBOX_OPERATOR_USER_ID = "B";
+  try {
+    assert.equal(
+      (await request("operations/status", undefined, "A")).status,
+      403,
+    );
+    const result = await request("operations/status", undefined, "B");
+    assert.equal(result.status, 200);
+    assert.equal(result.data.releaseReadiness, "not_assessed");
+    assert.equal(JSON.stringify(result.data).includes("b@example.com"), false);
+  } finally {
+    delete globalThis.__backend.env.INBOX_OPERATOR_USER_ID;
+  }
+});
+test("health fails on missing schema and exception logs omit untrusted error names and messages", async () => {
+  const logs = [],
+    original = console.error;
+  console.error = (line) => logs.push(line);
+  try {
+    globalThis.__backend.beforeQuery = async (sql) => {
+      if (sql.includes("SELECT revision FROM retention_cursors")) {
+        const e = new Error("private-message");
+        e.name = "private@example.com";
+        throw e;
+      }
+    };
+    const failed = await request("health", undefined, null);
+    assert.equal(failed.status, 503);
+    assert.ok(failed.data.incident);
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].includes("private"), false);
+    globalThis.__backend.beforeQuery = null;
+    sqlite.exec("DELETE FROM retention_cursors");
+    assert.equal((await request("health", undefined, null)).status, 503);
+  } finally {
+    console.error = original;
+    globalThis.__backend.beforeQuery = null;
+  }
+});

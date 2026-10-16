@@ -106,3 +106,11 @@ PROGRESS: operator opt-in scheduled expiry purge, bounded100 per OAuth/unused-pl
 Retention source-final core136/security11/types/web build PASS. Independent bounded review/retest PASS; original scan-cost note corrected with composite indexed keyset window and CAS cursor, and retention documentation updated. Provider/host activation remains unverified. No full UI rerun locally because UI is unchanged; current-commit CI will verify the integrated runtime/UI.
 
 Native built Worker retention+D1 integration PASS: expired synthetic OAuth state physically removed and retention completion recorded, without credentials/mailbox. Local final format/lint PASS; awaiting publication and current-head CI.
+
+## Privacy-safe operations checkpoint — 2026-10-16 (working tree)
+
+PROGRESS: application database/schema health, defaultdisabled exact gateway operator role for aggregate diagnostics, stale/future/incomplete scheduler/retention checks, capped uncertainty/interruption/backlog/ticket counters, and allowlisted fixed operational events with incident UUID. Exception objects/names/messages no longer enter application API logs. Migration0015 indexes action state/lease and admission age. Focused40 cases PASS; source-final verification and independent review underway. Hosted gateway proof, monitor/alert sink delivery and platform log retention remain unverified; status explicitly does not assess release readiness. Goal ACTIVE/NOT READY.
+
+Operations checkpoint current verification: core141/security11/types/lint/web build PASS. Independent bounded review PASS40 operations/backend +8 security-backend checks and independent health/native-rejection probes. No local UI rerun because UI unchanged; current-commit CI will run complete integrated checks. External gateway/alerts and remaining product release gates are not waived.
+
+Native built Worker health+scheduled+D1 integration PASS with current operations source; no provider credentials or mailbox used. Current-head CI pending publication.

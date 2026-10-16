@@ -62,6 +62,7 @@ export const actions = sqliteTable(
   (t) => [
     index("actions_tenant").on(t.tenant, t.created),
     index("actions_plan").on(t.planId),
+    index("actions_status_lease").on(t.status, t.lease),
   ],
 );
 export const rules = sqliteTable(
@@ -200,12 +201,16 @@ export const serviceAdmission = sqliteTable("service_admission", {
   generation: integer("generation").notNull().default(0),
   updated: integer("updated").notNull(),
 });
-export const activeOperations = sqliteTable("active_operations", {
-  id: text("id").primaryKey(),
-  kind: text("kind").notNull(),
-  started: integer("started").notNull(),
-  generation: integer("generation").notNull(),
-});
+export const activeOperations = sqliteTable(
+  "active_operations",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    started: integer("started").notNull(),
+    generation: integer("generation").notNull(),
+  },
+  (t) => [index("active_operations_started").on(t.started)],
+);
 
 export const retentionHealth = sqliteTable("retention_health", {
   id: text("id").primaryKey(),

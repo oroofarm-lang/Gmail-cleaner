@@ -1,3 +1,4 @@
+import { emitOperationalEvent } from "../packages/operations/telemetry";
 import { runRetention } from "../lib/retention";
 import { runGmailScheduler } from "../lib/gmail-scheduler";
 import handler from "vinext/server/fetch-handler";
@@ -16,8 +17,10 @@ export default {
           runGmailScheduler(),
           runRetention(),
         ]);
-        if (results.some((result) => result.status === "rejected"))
+        if (results.some((result) => result.status === "rejected")) {
+          emitOperationalEvent("scheduled_failure");
           throw Error("Scheduled processing failed.");
+        }
       })(),
     );
   },

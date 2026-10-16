@@ -1,3 +1,5 @@
+import { applicationHealth, operatorStatus } from "@/lib/operations";
+import { emitOperationalEvent } from "@/packages/operations/telemetry";
 import { z } from "zod";
 import {
   ApiError,
@@ -32,17 +34,13 @@ const idSchema = z.string().min(1).max(300);
 async function handleAdmitted(req: Request) {
   try {
     const path = new URL(req.url).pathname.replace(/^\/api\//, "");
-    if (path === "health")
-      return json({
-        status: "ok",
-        service: "inbox-agent",
-        database: !!(await binding().prepare("SELECT 1 AS alive").first()),
-        liveGmail: "requires configured OAuth",
-        guardian: "not scheduled",
-      });
+    if (path === "health" && req.method === "GET")
+      return json(await applicationHealth());
     if (req.method === "POST") mutationGuard(req);
     const t = await tenant(),
       db = binding();
+    if (path === "operations/status" && req.method === "GET")
+      return json(await operatorStatus(t.id));
     if (path === "gmail/schedule" && req.method === "POST") {
       const input = z
         .object({
@@ -712,16 +710,12 @@ async function handleAdmitted(req: Request) {
         400,
       );
     if (e instanceof ApiError) return json({ error: e.message }, e.status);
-    console.error(
-      JSON.stringify({
-        event: "api_failure",
-        type: e instanceof Error ? e.name : "unknown",
-      }),
-    );
+    const incident = emitOperationalEvent("api_failure");
     return json(
       {
         error:
           "The action could not finish. Your mail stays safe. Please try again.",
+        incident,
       },
       503,
     );
@@ -731,12 +725,17 @@ async function handle(req: Request) {
   try {
     return await withAdmission(binding(), "request", () => handleAdmitted(req));
   } catch (error) {
+    const incident =
+      error instanceof AdmissionUnavailable
+        ? undefined
+        : emitOperationalEvent("infrastructure_failure");
     return json(
       {
         error:
           error instanceof AdmissionUnavailable
             ? error.message
             : "The service is unavailable. Please try again later.",
+        ...(incident ? { incident } : {}),
       },
       503,
     );
